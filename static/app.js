@@ -91,14 +91,15 @@ async function refreshQuota() {
     const d = await r.json()
     const bar = document.getElementById('quota-bar')
     if (!bar) return
-    if (d.used === 0) { bar.classList.add('hidden'); return }
+    // Always show bar — even at 0 (tracking resets on server restart)
     bar.classList.remove('hidden')
     const pct = Math.min(100, Math.round(d.used / d.total * 100))
     document.getElementById('quota-fill').style.width = pct + '%'
     document.getElementById('quota-fill').style.background =
       pct >= 90 ? 'var(--error)' : pct >= 70 ? '#f59e0b' : 'var(--accent)'
-    document.getElementById('quota-text').textContent =
-      `${d.used.toLocaleString()} / ${d.total.toLocaleString()} (осталось ${d.remaining.toLocaleString()})`
+    document.getElementById('quota-text').textContent = d.used === 0
+      ? `0 / ${d.total.toLocaleString()} (новая сессия)`
+      : `${d.used.toLocaleString()} / ${d.total.toLocaleString()} · осталось ${d.remaining.toLocaleString()}`
   } catch { /* non-critical */ }
 }
 
@@ -302,25 +303,36 @@ function startSSE(jobId, total) {
 }
 
 async function stopTranscription() {
-  if (!_currentJobId) return
+  if (!_currentJobId) {
+    showToast('Нет активной задачи', true)
+    return
+  }
   const btn = document.getElementById('stop-btn')
   btn.disabled = true
   btn.textContent = '⏳ Останавливаю...'
   try {
     const r = await fetch(`/api/jobs/${_currentJobId}/cancel`, { method: 'POST' })
+    const payload = await r.json().catch(() => ({}))
     if (!r.ok) {
-      const err = await r.json().catch(() => ({}))
-      showToast('Ошибка остановки: ' + (err.detail || r.status), true)
-      btn.disabled = false
-      btn.textContent = '⏹ Стоп'
+      if (r.status === 400) {
+        // Job already finished — just close SSE gracefully
+        sseSource?.close()
+        _setStopBtn(false)
+        _currentJobId = null
+        showToast('Задача уже завершилась')
+      } else {
+        showToast('Ошибка остановки: ' + (payload.detail || r.status), true)
+        btn.disabled = false
+        btn.textContent = '⏹ Стоп'
+      }
       return
     }
-    const data = await r.json()
     // Close SSE immediately — don't wait for next SSE tick
     sseSource?.close()
     _setStopBtn(false)
     _currentJobId = null
-    showToast(`Остановлено · ${data.completed ?? ''} сохранено`)
+    const saved = payload.completed ?? 0
+    showToast(saved > 0 ? `Остановлено · ${saved} сохранено` : 'Остановлено')
   } catch (e) {
     showToast('Ошибка: ' + e.message, true)
     btn.disabled = false
