@@ -5,6 +5,11 @@ let selectedIds = new Set()
 let sseSource = null
 let libPage = 1
 
+// ─── Runtime settings (synced with server) ───────────────────────
+let _currentMode = 'balanced'
+let _pendingMode = null
+let _customPath = ''      // empty = use server default
+
 // ─── Navigation ──────────────────────────────────────────────────
 
 function showSection(name) {
@@ -13,6 +18,7 @@ function showSection(name) {
   document.getElementById('s-' + name).classList.remove('hidden')
   event.target.classList.add('active')
   if (name === 'library') loadLibrary()
+  if (name === 'settings') loadSettings()
 }
 
 function switchTab(tab) {
@@ -173,7 +179,6 @@ async function fetchEstimateFromServer(videos) {
 
 async function startTranscription() {
   if (!selectedIds.size) { showToast('Выберите хотя бы одно видео', true); return }
-  // Send full metadata so title/channel/duration are saved correctly
   const selectedVideos = currentVideos
     .filter(v => selectedIds.has(v.video_id))
     .map(v => ({
@@ -184,10 +189,12 @@ async function startTranscription() {
       view_count: v.view_count || 0,
       upload_date: v.upload_date || '',
     }))
+  const body = { videos: selectedVideos }
+  if (_customPath) body.out_dir = _customPath
   try {
     const r = await fetch('/api/transcribe', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videos: selectedVideos }),
+      body: JSON.stringify(body),
     })
     if (!r.ok) { const err = await r.json(); showToast('Ошибка: ' + fmtErr(err, r.status), true); return }
     const data = await r.json()
@@ -354,3 +361,140 @@ function showToast(msg, isError = false) {
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => el.classList.remove('show'), 2500)
 }
+
+// ─── Settings ─────────────────────────────────────────────────────
+
+async function loadSettings() {
+  try {
+    const r = await fetch('/api/settings')
+    const data = await r.json()
+    _currentMode = data.mode || 'balanced'
+    _customPath = (data.transcripts_dir !== data.default_transcripts_dir) ? data.transcripts_dir : ''
+
+    // Restore path input
+    const pathInput = document.getElementById('transcripts-path')
+    if (_customPath) {
+      pathInput.value = _customPath
+      setPathStatus('ok', '✓ ' + _customPath)
+    } else {
+      pathInput.value = ''
+      setPathStatus('', 'По умолчанию: ' + data.default_transcripts_dir)
+    }
+
+    renderModeCards(_currentMode)
+    setModeStatus(_currentMode)
+  } catch { /* non-critical */ }
+}
+
+function renderModeCards(active) {
+  document.querySelectorAll('.mode-card').forEach(card => {
+    card.classList.toggle('active', card.dataset.mode === active)
+  })
+}
+
+function setModeStatus(mode) {
+  const labels = { safe: 'Экономный — 1 поток', balanced: 'Стандартный — 2 потока', fast: 'Быстрый — 4 потока' }
+  const el = document.getElementById('mode-status')
+  if (el) el.textContent = 'Текущий режим: ' + (labels[mode] || mode)
+}
+
+function setPathStatus(type, msg) {
+  const el = document.getElementById('path-status')
+  if (!el) return
+  el.textContent = msg
+  el.className = 'path-status' + (type ? ' ' + type : '')
+}
+
+async function validatePath() {
+  const raw = document.getElementById('transcripts-path').value.trim()
+  if (!raw) { setPathStatus('err', 'Введи путь'); return }
+  setPathStatus('', 'Проверяю...')
+  try {
+    const r = await fetch('/api/validate-path', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: raw }),
+    })
+    const data = await r.json()
+    if (!r.ok) { setPathStatus('err', '✗ ' + fmtErr(data, r.status)); return }
+
+    // Save to server
+    const r2 = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcripts_dir: data.resolved }),
+    })
+    if (!r2.ok) { setPathStatus('err', '✗ Не удалось сохранить'); return }
+    _customPath = data.resolved
+    document.getElementById('transcripts-path').value = data.resolved
+    setPathStatus('ok', '✓ Сохранено: ' + data.resolved)
+    showToast('Папка сохранена')
+  } catch (e) {
+    setPathStatus('err', '✗ ' + e.message)
+  }
+}
+
+async function resetPath() {
+  document.getElementById('transcripts-path').value = ''
+  _customPath = ''
+  await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transcripts_dir: '' }),
+  }).catch(() => {})
+  // Reload to get default path
+  loadSettings()
+  showToast('Путь сброшен на стандартный')
+}
+
+const MODE_WARNINGS = {
+  fast: 'Режим «Быстрый» запускает 4 параллельных потока транскрибации. Это может сильно нагрузить процессор и память — компьютер будет ощутимо тормозить во время работы.',
+  balanced: null,
+  safe: null,
+}
+
+function selectMode(mode) {
+  if (mode === _currentMode) return
+  const fromSafe = _currentMode === 'safe'
+  const warning = MODE_WARNINGS[mode]
+
+  if (warning || (fromSafe && mode !== 'safe')) {
+    _pendingMode = mode
+    const fromLabel = { safe: 'Экономный', balanced: 'Стандартный', fast: 'Быстрый' }[_currentMode]
+    const toLabel   = { safe: 'Экономный', balanced: 'Стандартный', fast: 'Быстрый' }[mode]
+    document.getElementById('modal-text').textContent =
+      (warning || `Вы переключаетесь с режима «${fromLabel}» на «${toLabel}».`) +
+      (fromSafe ? ' Ты уходишь с самого безопасного режима.' : '')
+    document.getElementById('mode-modal').classList.remove('hidden')
+    return
+  }
+  applyMode(mode)
+}
+
+function cancelMode() {
+  _pendingMode = null
+  document.getElementById('mode-modal').classList.add('hidden')
+}
+
+async function confirmMode() {
+  document.getElementById('mode-modal').classList.add('hidden')
+  if (_pendingMode) await applyMode(_pendingMode)
+  _pendingMode = null
+}
+
+async function applyMode(mode) {
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    })
+    if (!r.ok) { showToast('Ошибка сохранения режима', true); return }
+    _currentMode = mode
+    renderModeCards(mode)
+    setModeStatus(mode)
+    const labels = { safe: 'Экономный', balanced: 'Стандартный', fast: 'Быстрый' }
+    showToast('Режим: ' + labels[mode])
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, true)
+  }
+}
+
+// Init settings on page load
+window.addEventListener('load', () => loadSettings())

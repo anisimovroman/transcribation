@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
@@ -16,9 +18,23 @@ from core.storage import (
 )
 from core.postprocess import postprocess
 from core.export import export_to_obsidian, export_batch_zip
+from config import MAX_WORKERS, TRANSCRIPTS_DIR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# ─── Runtime settings (mutable, reset on server restart) ────────
+_settings = {
+    "workers": MAX_WORKERS,
+    "transcripts_dir": str(TRANSCRIPTS_DIR),
+    "mode": "balanced",
+}
+
+MODES = {
+    "safe":     {"workers": 1,  "label": "Экономный"},
+    "balanced": {"workers": 2,  "label": "Стандартный"},
+    "fast":     {"workers": 4,  "label": "Быстрый"},
+}
 
 
 # ─── Request schemas ────────────────────────────────────────────
@@ -50,6 +66,7 @@ class VideoMeta(BaseModel):
 
 class TranscribeRequest(BaseModel):
     videos: list[VideoMeta] = Field(min_length=1, max_length=200)
+    out_dir: Optional[str] = None
 
 
 # ─── Routes ─────────────────────────────────────────────────────
@@ -57,6 +74,63 @@ class TranscribeRequest(BaseModel):
 @router.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ─── Settings ───────────────────────────────────────────────────
+
+class SettingsRequest(BaseModel):
+    mode: Optional[str] = None
+    transcripts_dir: Optional[str] = None
+
+
+@router.get("/settings")
+async def get_settings():
+    return {
+        **_settings,
+        "modes": MODES,
+        "default_transcripts_dir": str(TRANSCRIPTS_DIR),
+    }
+
+
+@router.post("/settings")
+async def update_settings(req: SettingsRequest):
+    if req.mode is not None:
+        if req.mode not in MODES:
+            raise HTTPException(status_code=400, detail=f"Неизвестный режим: {req.mode}")
+        _settings["mode"] = req.mode
+        _settings["workers"] = MODES[req.mode]["workers"]
+
+    if req.transcripts_dir is not None:
+        if req.transcripts_dir == "":
+            _settings["transcripts_dir"] = str(TRANSCRIPTS_DIR)
+        else:
+            path = Path(req.transcripts_dir).expanduser().resolve()
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+                test_file = path / ".write_test"
+                test_file.touch()
+                test_file.unlink()
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Папка недоступна: {e}")
+            _settings["transcripts_dir"] = str(path)
+
+    return _settings
+
+
+@router.post("/validate-path")
+async def validate_path(body: dict):
+    raw = body.get("path", "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Путь не указан")
+    path = Path(raw).expanduser().resolve()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        test_file = path / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        return {"ok": True, "resolved": str(path)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/channel")
@@ -97,8 +171,8 @@ async def search(req: SearchRequest):
 async def start_transcribe(req: TranscribeRequest, background_tasks: BackgroundTasks):
     videos_dicts = [v.model_dump() for v in req.videos]
     job_id = create_job("transcribe", videos=videos_dicts)
-    background_tasks.add_task(_run_job, job_id, videos_dicts)
-    return {"job_id": job_id, "total": len(req.videos)}
+    background_tasks.add_task(_run_job, job_id, videos_dicts, req.out_dir)
+    return {"job_id": job_id, "total": len(req.videos), "out_dir": req.out_dir or _settings["transcripts_dir"]}
 
 
 @router.get("/progress/{job_id}")
@@ -126,8 +200,9 @@ async def progress(job_id: int):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-async def _run_job(job_id: int, videos: list[dict]):
-    sem = asyncio.Semaphore(2)
+async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = None):
+    sem = asyncio.Semaphore(_settings["workers"])
+    save_dir = out_dir or _settings["transcripts_dir"] or None
 
     async def process_one(v: dict):
         vid_id = v["video_id"]
@@ -155,6 +230,7 @@ async def _run_job(job_id: int, videos: list[dict]):
                         channel=v.get("channel", ""),
                         view_count=v.get("view_count", 0),
                         upload_date=v.get("upload_date", ""),
+                        out_dir=save_dir,
                     )
                     update_video_status(job_id, vid_id, "completed")
                     logger.info("Saved: %s (%s)", vid_id, result.method)

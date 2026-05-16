@@ -130,6 +130,7 @@ def get_cached(video_id: str) -> Optional[dict]:
 def save_txt(
     video_id: str, title: str, channel: str, text: str,
     method: str, upload_date: str,
+    out_dir: Optional[str] = None,
 ) -> Path:
     safe_channel = "".join(
         c if c.isalnum() or c in "_ " else "_"
@@ -143,7 +144,9 @@ def save_txt(
         date_str = datetime.now().strftime("%Y-%m-%d")
 
     filename = f"{date_str}_{safe_channel}_{video_id}.txt"
-    path = TRANSCRIPTS_DIR / filename
+    base = Path(out_dir) if out_dir else TRANSCRIPTS_DIR
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / filename
 
     header = (
         f"Заголовок: {title}\n"
@@ -164,6 +167,7 @@ def save_transcript(
     channel: str = "",
     view_count: int = 0,
     upload_date: str = "",
+    out_dir: Optional[str] = None,
 ) -> Path:
     final_title = title or result.video_id
     txt_path = save_txt(
@@ -173,6 +177,7 @@ def save_transcript(
         text=text,
         method=result.method,
         upload_date=upload_date,
+        out_dir=out_dir,
     )
     with get_conn() as conn:
         conn.execute(

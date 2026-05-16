@@ -18,6 +18,7 @@
     <button class="nav-btn active" onclick="showSection('transcribe')">Транскрибация</button>
     <button class="nav-btn" onclick="showSection('library')">Библиотека</button>
     <button class="nav-btn" onclick="showSection('export')">Экспорт</button>
+    <button class="nav-btn" onclick="showSection('settings')">Настройки</button>
   </nav>
 
   <!-- ══════════ SECTION: TRANSCRIBE ══════════ -->
@@ -151,6 +152,61 @@
       <button class="btn-secondary" onclick="downloadZip()">⬇ Скачать ZIP</button>
     </div>
   </section>
+
+  <!-- ══════════ SECTION: SETTINGS ══════════ -->
+  <section id="s-settings" class="section hidden">
+
+    <div class="settings-card">
+      <div class="settings-card-title">Папка для сохранения</div>
+      <p class="settings-desc">Куда сохранять .txt файлы с транскрипциями. По умолчанию — папка <code>transcripts/</code> рядом с программой.</p>
+      <div class="path-row">
+        <input type="text" id="transcripts-path" placeholder="/Users/you/Documents/Transcripts">
+        <button class="btn-secondary" onclick="validatePath()">Проверить путь</button>
+        <button class="btn-link" onclick="resetPath()">Сбросить</button>
+      </div>
+      <div id="path-status" class="path-status"></div>
+    </div>
+
+    <div class="settings-card">
+      <div class="settings-card-title">Режим нагрузки</div>
+      <p class="settings-desc">Сколько видео обрабатывается параллельно. Больше потоков — быстрее, но сильнее грузит процессор.</p>
+      <div class="mode-grid">
+        <div class="mode-card" data-mode="safe" onclick="selectMode('safe')">
+          <div class="mode-icon">🐢</div>
+          <div class="mode-name">Экономный</div>
+          <div class="mode-workers">1 поток</div>
+          <div class="mode-desc">Минимальная нагрузка. Компьютер работает свободно.</div>
+        </div>
+        <div class="mode-card" data-mode="balanced" onclick="selectMode('balanced')">
+          <div class="mode-icon">⚖️</div>
+          <div class="mode-name">Стандартный</div>
+          <div class="mode-workers">2 потока</div>
+          <div class="mode-desc">Оптимальный баланс. Рекомендуется для большинства задач.</div>
+        </div>
+        <div class="mode-card" data-mode="fast" onclick="selectMode('fast')">
+          <div class="mode-icon">🚀</div>
+          <div class="mode-name">Быстрый</div>
+          <div class="mode-workers">4 потока</div>
+          <div class="mode-desc">Максимальная скорость. Компьютер может заметно тормозить.</div>
+        </div>
+      </div>
+      <div id="mode-status" class="mode-status"></div>
+    </div>
+
+  </section>
+</div>
+
+<!-- ══════════ MODAL: Предупреждение о режиме ══════════ -->
+<div id="mode-modal" class="modal-overlay hidden" onclick="if(event.target===this)cancelMode()">
+  <div class="modal-box">
+    <div class="modal-warn-icon">⚠️</div>
+    <div class="modal-title">Смена режима нагрузки</div>
+    <p id="modal-text" class="modal-body"></p>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="cancelMode()">Отмена</button>
+      <button class="btn-primary" onclick="confirmMode()">Переключить</button>
+    </div>
+  </div>
 </div>
 
 <div id="toast" class="toast"></div>
