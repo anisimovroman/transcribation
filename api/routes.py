@@ -16,7 +16,7 @@ from core.transcriber import transcribe_video
 from core.storage import (
     get_conn, is_cached, get_cached, save_transcript,
     create_job, update_video_status, get_pending_videos,
-    search_transcripts, get_job_status,
+    search_transcripts, get_job_status, append_to_single_file,
 )
 from core.postprocess import postprocess
 from core.export import export_to_obsidian, export_batch_zip
@@ -30,6 +30,8 @@ _settings = {
     "workers": MAX_WORKERS,
     "transcripts_dir": str(TRANSCRIPTS_DIR),
     "mode": "balanced",
+    "save_mode": "separate",   # "separate" | "single"
+    "single_file": "",         # path when save_mode == "single"
 }
 
 MODES = {
@@ -83,6 +85,8 @@ async def health():
 class SettingsRequest(BaseModel):
     mode: Optional[str] = None
     transcripts_dir: Optional[str] = None
+    save_mode: Optional[str] = None
+    single_file: Optional[str] = None
 
 
 @router.get("/settings")
@@ -115,6 +119,23 @@ async def update_settings(req: SettingsRequest):
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Папка недоступна: {e}")
             _settings["transcripts_dir"] = str(path)
+
+    if req.save_mode is not None:
+        if req.save_mode not in ("separate", "single"):
+            raise HTTPException(status_code=400, detail="save_mode должен быть 'separate' или 'single'")
+        _settings["save_mode"] = req.save_mode
+
+    if req.single_file is not None:
+        if req.single_file == "":
+            _settings["single_file"] = ""
+        else:
+            p = Path(req.single_file).expanduser().resolve()
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.touch(exist_ok=True)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Файл недоступен: {e}")
+            _settings["single_file"] = str(p)
 
     return _settings
 
@@ -178,6 +199,58 @@ async def pick_folder(body: dict = {}):
         raise HTTPException(status_code=204, detail="Отменено")
     resolved = str(Path(path).expanduser().resolve())
     return {"path": resolved}
+
+
+def _open_file_dialog(title: str) -> str:
+    """Open native OS save-file dialog; returns chosen path or ''."""
+    if sys.platform == "darwin":
+        script = (
+            f'POSIX path of (choose file name with prompt "{title}" '
+            f'default name "transcripts.txt")'
+        )
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    if sys.platform == "win32":
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$d=New-Object System.Windows.Forms.SaveFileDialog;"
+            f'$d.Title="{title}";'
+            '$d.Filter="Text files (*.txt)|*.txt|All files (*.*)|*.*";'
+            '$d.FileName="transcripts.txt";'
+            "if($d.ShowDialog() -eq 'OK'){$d.FileName}"
+        )
+        r = subprocess.run(["powershell", "-Command", ps], capture_output=True, text=True)
+        return r.stdout.strip()
+
+    for cmd in [
+        ["zenity", "--file-selection", "--save", "--confirm-overwrite",
+         f"--title={title}", "--filename=transcripts.txt"],
+        ["kdialog", "--getsavefilename", os.path.expanduser("~") + "/transcripts.txt",
+         "*.txt", f"--title={title}"],
+    ]:
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        except FileNotFoundError:
+            continue
+    return ""
+
+
+@router.post("/pick-file")
+async def pick_file(body: dict = {}):
+    title = body.get("title", "Выберите или создайте файл")
+    try:
+        path = await asyncio.to_thread(_open_file_dialog, title)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if not path:
+        raise HTTPException(status_code=204, detail="Отменено")
+    p = Path(path).expanduser().resolve()
+    if not p.suffix:
+        p = p.with_suffix(".txt")
+    return {"path": str(p)}
 
 
 @router.post("/channel")
@@ -249,7 +322,9 @@ async def progress(job_id: int):
 
 async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = None):
     sem = asyncio.Semaphore(_settings["workers"])
-    save_dir = out_dir or _settings["transcripts_dir"] or None
+    save_mode = _settings["save_mode"]
+    single_file = _settings["single_file"] if save_mode == "single" else None
+    save_dir = (out_dir or _settings["transcripts_dir"] or None) if not single_file else None
 
     async def process_one(v: dict):
         vid_id = v["video_id"]
@@ -278,6 +353,7 @@ async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = Non
                         view_count=v.get("view_count", 0),
                         upload_date=v.get("upload_date", ""),
                         out_dir=save_dir,
+                        single_file=single_file,
                     )
                     update_video_status(job_id, vid_id, "completed")
                     logger.info("Saved: %s (%s)", vid_id, result.method)

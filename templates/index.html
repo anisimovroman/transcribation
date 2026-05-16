@@ -152,15 +152,51 @@
   <section id="s-settings" class="section hidden">
 
     <div class="settings-card">
-      <div class="settings-card-title">Папка для сохранения</div>
-      <p class="settings-desc">Куда сохранять .txt файлы с транскрипциями. По умолчанию — папка <code>transcripts/</code> рядом с программой.</p>
-      <div class="path-row">
-        <input type="text" id="transcripts-path" placeholder="/Users/you/Documents/Transcripts">
-        <button class="btn-secondary" id="pick-folder-btn" onclick="pickFolder('transcripts-path', 'path-status', 'Выберите папку для транскрипций')">📂 Выбрать</button>
-        <button class="btn-secondary" onclick="validatePath()">Проверить</button>
-        <button class="btn-link" onclick="resetPath()">Сбросить</button>
+      <div class="settings-card-title">Режим сохранения</div>
+      <p class="settings-desc">Каждое видео в свой файл — или все транскрипции в один общий файл с разделителями.</p>
+      <div class="save-mode-toggle">
+        <label class="save-mode-opt" id="opt-separate">
+          <input type="radio" name="save-mode" value="separate" onchange="setSaveMode('separate')" checked>
+          <span class="save-mode-label">
+            <span class="save-mode-icon">📄📄</span>
+            <span>
+              <strong>Отдельный файл</strong> на каждое видео
+              <small>Имя файла: дата + название + ID</small>
+            </span>
+          </span>
+        </label>
+        <label class="save-mode-opt" id="opt-single">
+          <input type="radio" name="save-mode" value="single" onchange="setSaveMode('single')">
+          <span class="save-mode-label">
+            <span class="save-mode-icon">📋</span>
+            <span>
+              <strong>Один файл</strong> для всех транскрипций
+              <small>Записи разделяются полосой с заголовком</small>
+            </span>
+          </span>
+        </label>
       </div>
-      <div id="path-status" class="path-status"></div>
+
+      <!-- Отдельные файлы — папка -->
+      <div id="save-dir-block">
+        <div class="path-row" style="margin-top:14px">
+          <input type="text" id="transcripts-path" placeholder="/Users/you/Documents/Transcripts">
+          <button class="btn-secondary" onclick="pickFolder('transcripts-path', 'path-status', 'Выберите папку для транскрипций')">📂 Папка</button>
+          <button class="btn-secondary" onclick="validatePath()">Проверить</button>
+          <button class="btn-link" onclick="resetPath()">Сбросить</button>
+        </div>
+        <div id="path-status" class="path-status"></div>
+      </div>
+
+      <!-- Один файл — путь к файлу -->
+      <div id="save-file-block" class="hidden">
+        <div class="path-row" style="margin-top:14px">
+          <input type="text" id="single-file-path" placeholder="/Users/you/Documents/all_transcripts.txt">
+          <button class="btn-secondary" onclick="pickSingleFile()">📄 Файл</button>
+          <button class="btn-link" onclick="resetSingleFile()">Сбросить</button>
+        </div>
+        <div id="single-file-status" class="path-status"></div>
+      </div>
     </div>
 
     <div class="settings-card">

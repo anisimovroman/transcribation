@@ -127,28 +127,19 @@ def get_cached(video_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def save_txt(
-    video_id: str, title: str, channel: str, text: str,
-    method: str, upload_date: str,
-    out_dir: Optional[str] = None,
-) -> Path:
-    safe_channel = "".join(
-        c if c.isalnum() or c in "_ " else "_"
-        for c in (channel or "unknown")
-    )[:30].strip("_") or "unknown"
+def _safe_name(s: str, maxlen: int) -> str:
+    return "".join(c if c.isalnum() or c in "_ " else "_" for c in s)[:maxlen].strip("_") or "unknown"
 
-    date_str = (upload_date or "")[:10]
-    if len(date_str) == 8 and date_str.isdigit():
-        date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-    if not date_str:
-        date_str = datetime.now().strftime("%Y-%m-%d")
 
-    filename = f"{date_str}_{safe_channel}_{video_id}.txt"
-    base = Path(out_dir) if out_dir else TRANSCRIPTS_DIR
-    base.mkdir(parents=True, exist_ok=True)
-    path = base / filename
+def _date_str(upload_date: str) -> str:
+    d = (upload_date or "")[:10]
+    if len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+    return d or datetime.now().strftime("%Y-%m-%d")
 
-    header = (
+
+def _make_header(title: str, channel: str, date_str: str, video_id: str, method: str) -> str:
+    return (
         f"Заголовок: {title}\n"
         f"Канал: {channel}\n"
         f"Дата: {date_str}\n"
@@ -156,7 +147,36 @@ def save_txt(
         f"Метод: {method}\n"
         f"{'─' * 60}\n\n"
     )
-    path.write_text(header + text, encoding="utf-8")
+
+
+def save_txt(
+    video_id: str, title: str, channel: str, text: str,
+    method: str, upload_date: str,
+    out_dir: Optional[str] = None,
+) -> Path:
+    date = _date_str(upload_date)
+    safe_title = _safe_name(title or video_id, 60)
+    filename = f"{date}_{safe_title}_{video_id}.txt"
+    base = Path(out_dir) if out_dir else TRANSCRIPTS_DIR
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / filename
+    path.write_text(_make_header(title, channel, date, video_id, method) + text, encoding="utf-8")
+    return path
+
+
+def append_to_single_file(
+    single_path: str,
+    video_id: str, title: str, channel: str, text: str,
+    method: str, upload_date: str,
+) -> Path:
+    """Append one transcription block to a shared file, separated by a banner."""
+    path = Path(single_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    date = _date_str(upload_date)
+    separator = "\n\n" + "━" * 60 + "\n"
+    block = separator + _make_header(title, channel, date, video_id, method) + text
+    with path.open("a", encoding="utf-8") as f:
+        f.write(block)
     return path
 
 
@@ -168,17 +188,29 @@ def save_transcript(
     view_count: int = 0,
     upload_date: str = "",
     out_dir: Optional[str] = None,
+    single_file: Optional[str] = None,
 ) -> Path:
     final_title = title or result.video_id
-    txt_path = save_txt(
-        video_id=result.video_id,
-        title=final_title,
-        channel=channel,
-        text=text,
-        method=result.method,
-        upload_date=upload_date,
-        out_dir=out_dir,
-    )
+    if single_file:
+        txt_path = append_to_single_file(
+            single_path=single_file,
+            video_id=result.video_id,
+            title=final_title,
+            channel=channel,
+            text=text,
+            method=result.method,
+            upload_date=upload_date,
+        )
+    else:
+        txt_path = save_txt(
+            video_id=result.video_id,
+            title=final_title,
+            channel=channel,
+            text=text,
+            method=result.method,
+            upload_date=upload_date,
+            out_dir=out_dir,
+        )
     with get_conn() as conn:
         conn.execute(
             """INSERT OR REPLACE INTO transcripts
@@ -189,7 +221,6 @@ def save_transcript(
              result.duration_sec, result.method, result.language,
              text, str(txt_path), view_count, upload_date),
         )
-        # Sync FTS5 index
         conn.execute(
             "INSERT OR REPLACE INTO transcripts_fts(video_id, title, channel, text) "
             "VALUES (?, ?, ?, ?)",

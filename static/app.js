@@ -8,7 +8,9 @@ let libPage = 1
 // ─── Runtime settings (synced with server) ───────────────────────
 let _currentMode = 'balanced'
 let _pendingMode = null
-let _customPath = ''      // empty = use server default
+let _customPath = ''       // empty = use server default
+let _saveMode = 'separate' // "separate" | "single"
+let _singleFile = ''       // path when _saveMode === "single"
 
 // ─── Navigation ──────────────────────────────────────────────────
 
@@ -367,6 +369,8 @@ async function loadSettings() {
     const r = await fetch('/api/settings')
     const data = await r.json()
     _currentMode = data.mode || 'balanced'
+    _saveMode = data.save_mode || 'separate'
+    _singleFile = data.single_file || ''
     _customPath = (data.transcripts_dir !== data.default_transcripts_dir) ? data.transcripts_dir : ''
 
     // Restore path input
@@ -379,9 +383,83 @@ async function loadSettings() {
       setPathStatus('', 'По умолчанию: ' + data.default_transcripts_dir)
     }
 
+    // Restore single file input
+    const singleInput = document.getElementById('single-file-path')
+    if (singleInput && _singleFile) {
+      singleInput.value = _singleFile
+      setSingleFileStatus('ok', '✓ ' + _singleFile)
+    }
+
+    // Restore save mode radio + block visibility
+    const radio = document.querySelector(`input[name="save-mode"][value="${_saveMode}"]`)
+    if (radio) radio.checked = true
+    _applySaveModeUI(_saveMode)
+
     renderModeCards(_currentMode)
     setModeStatus(_currentMode)
   } catch { /* non-critical */ }
+}
+
+function _applySaveModeUI(mode) {
+  document.getElementById('save-dir-block')?.classList.toggle('hidden', mode !== 'separate')
+  document.getElementById('save-file-block')?.classList.toggle('hidden', mode !== 'single')
+}
+
+async function setSaveMode(mode) {
+  _saveMode = mode
+  _applySaveModeUI(mode)
+  await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ save_mode: mode }),
+  }).catch(() => {})
+}
+
+function setSingleFileStatus(type, msg) {
+  const el = document.getElementById('single-file-status')
+  if (!el) return
+  el.textContent = msg
+  el.className = 'path-status' + (type ? ' ' + type : '')
+}
+
+async function pickSingleFile() {
+  const btn = event.currentTarget
+  const orig = btn.textContent
+  btn.textContent = '⏳ Открываю...'
+  btn.disabled = true
+  try {
+    const r = await fetch('/api/pick-file', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Выберите или создайте файл для транскрипций' }),
+    })
+    if (r.status === 204 || r.status === 400) return
+    if (!r.ok) { const e = await r.json(); showToast(fmtErr(e, r.status), true); return }
+    const data = await r.json()
+    document.getElementById('single-file-path').value = data.path
+    _singleFile = data.path
+    setSingleFileStatus('ok', '✓ ' + data.path)
+    // Save to server
+    await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ single_file: data.path }),
+    })
+    showToast('Файл сохранён')
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, true)
+  } finally {
+    btn.textContent = orig
+    btn.disabled = false
+  }
+}
+
+async function resetSingleFile() {
+  document.getElementById('single-file-path').value = ''
+  _singleFile = ''
+  setSingleFileStatus('', '')
+  await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ single_file: '' }),
+  }).catch(() => {})
+  showToast('Сброшено')
 }
 
 function renderModeCards(active) {
