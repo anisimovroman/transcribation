@@ -100,6 +100,9 @@ input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--ac
 #lib-total{font-size:13px;color:var(--muted);white-space:nowrap}
 .btn-danger{padding:6px 12px;border-radius:8px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.08);color:var(--error);cursor:pointer;font-size:12px;font-weight:500;white-space:nowrap;transition:all .15s}
 .btn-danger:hover{background:rgba(239,68,68,.18)}
+.btn-stop{padding:5px 12px;border-radius:8px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.08);color:var(--error);cursor:pointer;font-size:12px;font-weight:500;transition:all .15s}
+.btn-stop:hover{background:rgba(239,68,68,.18)}
+.btn-stop:disabled{opacity:.5;cursor:default}
 .btn-delete{color:var(--muted)!important;font-size:13px;opacity:.5;transition:opacity .15s,color .15s}
 .btn-delete:hover{opacity:1;color:var(--error)!important}
 .lib-list{display:flex;flex-direction:column;gap:8px}

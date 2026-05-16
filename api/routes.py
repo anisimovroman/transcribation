@@ -27,6 +27,8 @@ from config import MAX_WORKERS, TRANSCRIPTS_DIR
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+_cancelled_jobs: set[int] = set()
+
 # ─── Runtime settings (mutable, reset on server restart) ────────
 _settings = {
     "workers": MAX_WORKERS,
@@ -405,7 +407,7 @@ async def progress(job_id: int):
             }
             yield f"data: {json.dumps(payload)}\n\n"
 
-            if status["status"] in ("completed", "failed"):
+            if status["status"] in ("completed", "failed", "cancelled"):
                 break
             await asyncio.sleep(1)
 
@@ -420,7 +422,11 @@ async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = Non
 
     async def process_one(v: dict):
         vid_id = v["video_id"]
+        if job_id in _cancelled_jobs:
+            return
         async with sem:
+            if job_id in _cancelled_jobs:
+                return
             try:
                 update_video_status(job_id, vid_id, "processing")
 
@@ -466,8 +472,38 @@ async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = Non
 
     await asyncio.gather(*[process_one(v) for v in videos])
 
+    _cancelled_jobs.discard(job_id)
     with get_conn() as conn:
-        conn.execute("UPDATE jobs SET status='completed' WHERE id=?", (job_id,))
+        conn.execute(
+            "UPDATE jobs SET status='completed' WHERE id=? AND status='running'",
+            (job_id,),
+        )
+
+
+# ─── Cancel ─────────────────────────────────────────────────────
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: int):
+    status = get_job_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if status["status"] not in ("running",):
+        raise HTTPException(status_code=400, detail="Задача уже завершена")
+    _cancelled_jobs.add(job_id)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE job_videos SET status='failed', error_msg='Отменено' "
+            "WHERE job_id=? AND status='pending'",
+            (job_id,),
+        )
+        failed = conn.execute(
+            "SELECT COUNT(*) FROM job_videos WHERE job_id=? AND status='failed'", (job_id,)
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE jobs SET failed=?, status='cancelled' WHERE id=?",
+            (failed, job_id),
+        )
+    return {"job_id": job_id, "status": "cancelled"}
 
 
 # ─── Retry ──────────────────────────────────────────────────────

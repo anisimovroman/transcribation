@@ -4,6 +4,7 @@ let currentVideos = []
 let selectedIds = new Set()
 let sseSource = null
 let libPage = 1
+let _currentJobId = null
 
 // ─── Runtime settings (synced with server) ───────────────────────
 let _currentMode = 'balanced'
@@ -224,8 +225,14 @@ async function startTranscription() {
 
 const _processingStart = {}  // videoId -> startMs when status first became 'processing'
 
+function _setStopBtn(visible) {
+  document.getElementById('stop-btn')?.classList.toggle('hidden', !visible)
+}
+
 function startSSE(jobId, total) {
   if (sseSource) sseSource.close()
+  _currentJobId = jobId
+  _setStopBtn(true)
   if (total) document.getElementById('progress-count').textContent = `0/${total}`
   document.getElementById('progress-fill').style.width = '0%'
   sseSource = new EventSource('/api/progress/' + jobId)
@@ -244,7 +251,7 @@ function startSSE(jobId, total) {
         const orig = currentVideos.find(x => x.video_id === v.video_id)
         const label = v.title || (orig ? orig.title : v.video_id)
         const errNote = v.error_msg ? `<div class="video-error">${escHtml(v.error_msg)}</div>` : ''
-        const retryBtn = v.status === 'failed'
+        const retryBtn = v.status === 'failed' && v.error_msg !== 'Отменено'
           ? `<button class="btn-retry" onclick="retryVideo(${jid},'${v.video_id}')">↺ Повторить</button>`
           : ''
         const progressBar = buildVideoProgressBar(v)
@@ -263,11 +270,37 @@ function startSSE(jobId, total) {
     }
     if (data.status === 'completed') {
       sseSource.close()
+      _setStopBtn(false)
       showToast(`✓ Готово! ${data.completed} транскрипций сохранено`)
       notifyJobDone(data.completed, data.failed || 0)
+    } else if (data.status === 'cancelled') {
+      sseSource.close()
+      _setStopBtn(false)
+      showToast(`Остановлено · ${data.completed || 0} сохранено`)
     }
   }
-  sseSource.onerror = () => sseSource.close()
+  sseSource.onerror = () => { sseSource.close(); _setStopBtn(false) }
+}
+
+async function stopTranscription() {
+  if (!_currentJobId) return
+  const btn = document.getElementById('stop-btn')
+  btn.disabled = true
+  btn.textContent = '⏳ Останавливаю...'
+  try {
+    const r = await fetch(`/api/jobs/${_currentJobId}/cancel`, { method: 'POST' })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      showToast('Ошибка остановки: ' + (err.detail || r.status), true)
+      btn.disabled = false
+      btn.textContent = '⏹ Стоп'
+    }
+    // SSE will close itself when it receives 'cancelled' status
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, true)
+    btn.disabled = false
+    btn.textContent = '⏹ Стоп'
+  }
 }
 
 function buildVideoProgressBar(v) {
