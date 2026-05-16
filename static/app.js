@@ -253,7 +253,7 @@ function _setResumeBtn(visible) {
   document.getElementById('resume-btn')?.classList.toggle('hidden', !visible)
 }
 
-function _renderJobVideos(videos, jobId) {
+function _renderJobVideos(videos, jobId, frozen = false) {
   document.getElementById('job-list').innerHTML = videos.map(v => {
     const cls = { completed: 'v-done', failed: 'v-failed', processing: 'v-processing' }[v.status] || 'v-pending'
     const icon = { completed: '✓', failed: '✕', processing: '⟳' }[v.status] || '·'
@@ -272,7 +272,7 @@ function _renderJobVideos(videos, jobId) {
         ${retryBtn}
         <span class="video-status ${cls}">${icon}</span>
       </div>
-      ${buildVideoProgressBar(v)}
+      ${buildVideoProgressBar(v, frozen)}
     </div>`
   }).join('')
 }
@@ -349,8 +349,8 @@ async function stopTranscription() {
     _setStopBtn(false)
     btn.disabled = false
     btn.textContent = '⏹ Стоп'
-    // Re-render with server-provided video states to clear running CSS animations
-    if (payload.videos) _renderJobVideos(payload.videos, _currentJobId)
+    // Re-render with frozen=true: removes CSS @keyframes animation from processing videos
+    if (payload.videos) _renderJobVideos(payload.videos, _currentJobId, true)
     // Keep _currentJobId so "Продолжить" can reconnect SSE
     _setResumeBtn(true)
     const saved = payload.completed ?? 0
@@ -362,9 +362,14 @@ async function stopTranscription() {
   }
 }
 
-function buildVideoProgressBar(v) {
+function buildVideoProgressBar(v, frozen = false) {
   const id = v.video_id
   if (v.status === 'processing') {
+    // frozen=true: SSE closed after stop — show static bar, no CSS animation
+    if (frozen) {
+      delete _processingStart[id]
+      return `<div class="vpbar"><div class="vpbar-fill" style="width:45%;opacity:.5"></div></div>`
+    }
     if (!_processingStart[id]) _processingStart[id] = Date.now()
     const elapsed = (Date.now() - _processingStart[id]) / 1000
     // Estimate: Whisper ~0.5x realtime on CPU, ~6x on Apple GPU → use 0.4x as middle ground
