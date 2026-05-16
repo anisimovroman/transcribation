@@ -115,6 +115,12 @@ def init_db():
             USING fts5(video_id UNINDEXED, title, channel, text, tokenize='unicode61');
         """)
         _migrate(conn)
+        # On server startup, background tasks from previous run are gone —
+        # mark any job that was still running as failed so they don't appear active
+        conn.execute(
+            "UPDATE jobs SET status='failed' "
+            "WHERE status IN ('running', 'cancelling')"
+        )
 
 
 def is_cached(video_id: str) -> bool:

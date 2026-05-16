@@ -318,6 +318,24 @@ function continueTranscription() {
   startSSE(_currentJobId, 0)
 }
 
+async function checkActiveJob() {
+  try {
+    const r = await fetch('/api/jobs/active')
+    if (!r.ok) return
+    const data = await r.json()
+    if (!data.job) return
+    const job = data.job
+    const done = (job.completed || 0) + (job.failed || 0)
+    const pct = job.total ? Math.round(done / job.total * 100) : 0
+    document.getElementById('progress-fill').style.width = pct + '%'
+    document.getElementById('progress-count').textContent = `${done}/${job.total || 0}`
+    document.getElementById('progress-section').classList.remove('hidden')
+    if (job.videos) _renderJobVideos(job.videos, job.id)
+    startSSE(job.id, job.total)
+    showToast(`Транскрибация продолжается (${done}/${job.total || '?'})`)
+  } catch { /* non-critical */ }
+}
+
 async function stopTranscription() {
   if (!_currentJobId) {
     showToast('Нет активной задачи', true)
@@ -1052,4 +1070,5 @@ window.addEventListener('load', () => {
   loadSettings()
   initApiKeyBanner()
   refreshQuota()
+  checkActiveJob()
 })

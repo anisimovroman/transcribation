@@ -499,6 +499,26 @@ async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = Non
         )
 
 
+# ─── Active job (for reconnect after page refresh) ──────────────
+
+@router.get("/jobs/active")
+async def get_active_job():
+    """Return the most recent running/cancelling job, if any."""
+    with get_conn() as conn:
+        job = conn.execute(
+            "SELECT * FROM jobs WHERE status IN ('running', 'cancelling') "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not job:
+            return {"job": None}
+        videos = conn.execute(
+            "SELECT video_id, status, title, error_msg, duration_sec FROM job_videos "
+            "WHERE job_id=? ORDER BY position",
+            (job["id"],),
+        ).fetchall()
+    return {"job": {**dict(job), "videos": [dict(v) for v in videos]}}
+
+
 # ─── Cancel ─────────────────────────────────────────────────────
 
 @router.post("/jobs/{job_id}/cancel")
