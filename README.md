@@ -23,7 +23,7 @@
 ## Установка
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/transcribation.git
+git clone https://github.com/anisimovroman/transcribation.git
 cd transcribation
 chmod +x install.sh start.sh
 ./install.sh
