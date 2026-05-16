@@ -129,14 +129,10 @@
   <section id="s-export" class="section hidden">
     <div class="export-card">
       <h3>Экспорт в Obsidian</h3>
-      <p class="export-desc">Создаёт .md файлы с YAML frontmatter в твоём vault</p>
+      <p class="export-desc">Создаёт .md файлы с YAML frontmatter для всех транскрипций в твоём vault</p>
       <div class="field">
         <label>Путь к Obsidian vault</label>
         <input type="text" id="obsidian-path" placeholder="/Users/you/vault" value="">
-      </div>
-      <div class="field">
-        <label>Video IDs (через запятую, или пусто = все)</label>
-        <input type="text" id="obsidian-ids" placeholder="dQw4w9WgXcQ, abc123...">
       </div>
       <button class="btn-primary" onclick="exportObsidian()">Экспортировать в Obsidian</button>
       <div id="obsidian-result" class="export-result hidden"></div>
@@ -145,10 +141,6 @@
     <div class="export-card">
       <h3>Скачать ZIP</h3>
       <p class="export-desc">Все транскрипции в одном архиве (.txt файлы, UTF-8)</p>
-      <div class="field">
-        <label>Video IDs (через запятую, или пусто = все)</label>
-        <input type="text" id="zip-ids" placeholder="dQw4w9WgXcQ, abc123...">
-      </div>
       <button class="btn-secondary" onclick="downloadZip()">⬇ Скачать ZIP</button>
     </div>
   </section>

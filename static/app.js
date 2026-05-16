@@ -288,23 +288,21 @@ async function loadLibrary(page = libPage) {
 async function exportObsidian() {
   const vaultPath = document.getElementById('obsidian-path').value.trim()
   if (!vaultPath) { showToast('Укажите путь к vault', true); return }
-  const ids = document.getElementById('obsidian-ids').value.split(',').map(s => s.trim()).filter(Boolean)
   const r = await fetch('/api/export/obsidian', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ video_ids: ids.length ? ids : await getAllCachedIds(), vault_path: vaultPath }),
+    body: JSON.stringify({ video_ids: await getAllCachedIds(), vault_path: vaultPath }),
   })
   const data = await r.json()
   const el = document.getElementById('obsidian-result')
   el.classList.remove('hidden')
-  el.textContent = `Экспортировано: ${data.exported}\nПропущено: ${data.skipped?.length || 0}\n${data.paths?.slice(0,3).join('\n') || ''}`
+  el.textContent = `Экспортировано: ${data.exported}\nПропущено: ${data.skipped?.length || 0}\n${data.paths?.slice(0, 3).join('\n') || ''}`
   showToast(`✓ ${data.exported} файлов экспортировано`)
 }
 
 async function downloadZip() {
-  const ids = document.getElementById('zip-ids').value.split(',').map(s => s.trim()).filter(Boolean)
   const r = await fetch('/api/export/zip', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ video_ids: ids }),
+    body: JSON.stringify({ video_ids: [] }),
   })
   if (!r.ok) { showToast('Ошибка при создании ZIP', true); return }
   const blob = await r.blob()
