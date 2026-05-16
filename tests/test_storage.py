@@ -2,8 +2,7 @@
 Phase 3 tests — core/storage.py
 Run: venv/bin/python -m pytest tests/test_storage.py -v
 """
-import sys, os, tempfile
-sys.path.insert(0, '.')
+import os, tempfile
 
 import pytest
 from pathlib import Path

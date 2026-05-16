@@ -2,9 +2,6 @@
 Phase 4 tests — core/postprocess.py
 Run: venv/bin/python -m pytest tests/test_postprocess.py -v
 """
-import sys
-sys.path.insert(0, '.')
-
 import pytest
 from core.postprocess import clean_text, postprocess
 

@@ -4,8 +4,7 @@ Full pipeline: API → transcribe → .txt → cache
 
 Run: venv/bin/python -m pytest tests/test_e2e.py -v -s
 """
-import sys, time, asyncio
-sys.path.insert(0, '.')
+import time, asyncio
 
 import pytest
 from unittest.mock import patch, AsyncMock

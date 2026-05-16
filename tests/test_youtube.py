@@ -2,9 +2,6 @@
 Phase 1 tests — core/youtube.py
 Run: venv/bin/python -m pytest tests/test_youtube.py -v
 """
-import sys
-sys.path.insert(0, '.')
-
 import pytest
 from core.youtube import (
     _parse_channel_url,

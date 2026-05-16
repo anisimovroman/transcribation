@@ -2,8 +2,7 @@
 Phase 6 tests — core/export.py
 Run: venv/bin/python -m pytest tests/test_export.py -v
 """
-import sys, zipfile, io
-sys.path.insert(0, '.')
+import zipfile, io
 
 import pytest
 import yaml

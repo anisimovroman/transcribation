@@ -17,11 +17,15 @@ venv/
 dist/
 build/
 
-# Временные аудио файлы
+# Временные аудио/видео файлы (yt-dlp)
 *.wav
 *.opus
 *.mp3
 *.m4a
+*.webm
+*.ogg
+*.part
+*.ytdl
 /tmp/transcribation/
 
 # macOS
