@@ -305,7 +305,11 @@ function startSSE(jobId, total) {
       showToast(`Остановлено · ${data.completed || 0} сохранено`)
     }
   }
-  sseSource.onerror = () => { sseSource.close(); _setStopBtn(false) }
+  sseSource.onerror = () => {
+    sseSource.close()
+    _setStopBtn(false)
+    if (_currentJobId) _setResumeBtn(true)  // let user reconnect if connection dropped
+  }
 }
 
 function continueTranscription() {

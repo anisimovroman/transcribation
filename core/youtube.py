@@ -6,7 +6,7 @@ from typing import Optional
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from config import YOUTUBE_API_KEY
+import config as _cfg
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +29,11 @@ class VideoMeta:
 def get_youtube_client():
     global _youtube_client
     if _youtube_client is None:
-        if not YOUTUBE_API_KEY:
+        key = _cfg.YOUTUBE_API_KEY  # read dynamically — key may have been set after startup
+        if not key:
             raise ValueError("YOUTUBE_API_KEY не задан в .env")
         try:
-            _youtube_client = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+            _youtube_client = build("youtube", "v3", developerKey=key)
         except Exception as e:
             raise ValueError(f"Не удалось создать YouTube API клиент: {e}") from e
     return _youtube_client
@@ -81,7 +82,7 @@ def _get_videos_api(video_ids: list[str]) -> list["VideoMeta"]:
             if e.resp.status == 403:
                 raise QuotaExceededError("YouTube API квота исчерпана") from e
             raise
-        _quota_used["videos_list"] += len(batch)
+        _quota_used["videos_list"] += 1  # videos.list costs 1 unit per call regardless of batch size
         for item in resp.get("items", []):
             vid_id = item["id"]
             snippet = item["snippet"]
@@ -354,7 +355,7 @@ def get_video_details(video_ids: list[str]) -> dict:
             ).execute()
         except HttpError:
             continue
-        _quota_used["videos_list"] += len(batch)
+        _quota_used["videos_list"] += 1  # videos.list costs 1 unit per call regardless of batch size
         for item in resp.get("items", []):
             vid_id = item["id"]
             duration_iso = item["contentDetails"]["duration"]

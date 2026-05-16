@@ -364,7 +364,8 @@ async def videos_by_urls(req: VideoUrlsRequest):
 @router.post("/channel")
 async def channel_videos(req: ChannelRequest):
     try:
-        videos = get_channel_videos(
+        videos = await asyncio.to_thread(
+            get_channel_videos,
             req.channel_url,
             limit=req.limit,
             exclude_shorts_flag=req.exclude_shorts,
@@ -381,7 +382,8 @@ async def channel_videos(req: ChannelRequest):
 @router.post("/search")
 async def search(req: SearchRequest):
     try:
-        videos = search_videos(
+        videos = await asyncio.to_thread(
+            search_videos,
             query=req.query,
             order=req.order,
             duration_filter=req.duration_filter,
