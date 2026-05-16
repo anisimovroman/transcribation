@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -131,6 +133,51 @@ async def validate_path(body: dict):
         return {"ok": True, "resolved": str(path)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _open_folder_dialog(title: str) -> str:
+    """Open a native OS folder picker and return the chosen path, or '' if cancelled."""
+    if sys.platform == "darwin":
+        script = f'POSIX path of (choose folder with prompt "{title}")'
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    if sys.platform == "win32":
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+            f'$d.Description="{title}";'
+            "$d.ShowNewFolderButton=$true;"
+            "if($d.ShowDialog() -eq 'OK'){$d.SelectedPath}"
+        )
+        r = subprocess.run(["powershell", "-Command", ps], capture_output=True, text=True)
+        return r.stdout.strip()
+
+    # Linux — try zenity, fall back to kdialog
+    for cmd in [
+        ["zenity", "--file-selection", "--directory", f"--title={title}"],
+        ["kdialog", "--getexistingdirectory", os.path.expanduser("~"), f"--title={title}"],
+    ]:
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        except FileNotFoundError:
+            continue
+    return ""
+
+
+@router.post("/pick-folder")
+async def pick_folder(body: dict = {}):
+    title = body.get("title", "Выберите папку")
+    try:
+        path = await asyncio.to_thread(_open_folder_dialog, title)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if not path:
+        raise HTTPException(status_code=204, detail="Отменено")
+    resolved = str(Path(path).expanduser().resolve())
+    return {"path": resolved}
 
 
 @router.post("/channel")

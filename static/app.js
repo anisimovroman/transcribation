@@ -403,6 +403,39 @@ function setPathStatus(type, msg) {
   el.className = 'path-status' + (type ? ' ' + type : '')
 }
 
+async function pickFolder(inputId, statusId, title) {
+  const btn = event.currentTarget
+  const orig = btn.textContent
+  btn.textContent = '⏳ Открываю...'
+  btn.disabled = true
+  try {
+    const r = await fetch('/api/pick-folder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    })
+    if (r.status === 204 || r.status === 400) { return }  // cancelled
+    if (!r.ok) { const e = await r.json(); showToast(fmtErr(e, r.status), true); return }
+    const data = await r.json()
+    document.getElementById(inputId).value = data.path
+    if (statusId) setPathStatus('ok', '✓ ' + data.path)
+
+    // Auto-save if it's the transcripts path
+    if (inputId === 'transcripts-path') {
+      await fetch('/api/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcripts_dir: data.path }),
+      })
+      _customPath = data.path
+      showToast('Папка сохранена')
+    }
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, true)
+  } finally {
+    btn.textContent = orig
+    btn.disabled = false
+  }
+}
+
 async function validatePath() {
   const raw = document.getElementById('transcripts-path').value.trim()
   if (!raw) { setPathStatus('err', 'Введи путь'); return }

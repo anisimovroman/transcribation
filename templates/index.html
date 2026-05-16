@@ -132,9 +132,12 @@
       <p class="export-desc">Создаёт .md файлы с YAML frontmatter для всех транскрипций в твоём vault</p>
       <div class="field">
         <label>Путь к Obsidian vault</label>
-        <input type="text" id="obsidian-path" placeholder="/Users/you/vault" value="">
+        <div class="path-row">
+          <input type="text" id="obsidian-path" placeholder="/Users/you/vault">
+          <button class="btn-secondary" id="pick-vault-btn" onclick="pickFolder('obsidian-path', null, 'Выберите папку Obsidian vault')">📂 Выбрать</button>
+        </div>
       </div>
-      <button class="btn-primary" onclick="exportObsidian()">Экспортировать в Obsidian</button>
+      <button class="btn-primary" onclick="exportObsidian()" style="margin-top:4px">Экспортировать в Obsidian</button>
       <div id="obsidian-result" class="export-result hidden"></div>
     </div>
 
@@ -153,7 +156,8 @@
       <p class="settings-desc">Куда сохранять .txt файлы с транскрипциями. По умолчанию — папка <code>transcripts/</code> рядом с программой.</p>
       <div class="path-row">
         <input type="text" id="transcripts-path" placeholder="/Users/you/Documents/Transcripts">
-        <button class="btn-secondary" onclick="validatePath()">Проверить путь</button>
+        <button class="btn-secondary" id="pick-folder-btn" onclick="pickFolder('transcripts-path', 'path-status', 'Выберите папку для транскрипций')">📂 Выбрать</button>
+        <button class="btn-secondary" onclick="validatePath()">Проверить</button>
         <button class="btn-link" onclick="resetPath()">Сбросить</button>
       </div>
       <div id="path-status" class="path-status"></div>
