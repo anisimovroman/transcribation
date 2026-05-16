@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube Transcription Tool</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="app">
+  <header class="header">
+    <h1>◈ YouTube Transcription Tool</h1>
+    <p class="subtitle">Транскрибируй каналы и поисковые запросы · <a href="/docs" target="_blank">API docs</a></p>
+  </header>
+
+  <nav class="main-nav">
+    <button class="nav-btn active" onclick="showSection('transcribe')">Транскрибация</button>
+    <button class="nav-btn" onclick="showSection('library')">Библиотека</button>
+    <button class="nav-btn" onclick="showSection('export')">Экспорт</button>
+  </nav>
+
+  <!-- ══════════ SECTION: TRANSCRIBE ══════════ -->
+  <section id="s-transcribe" class="section">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('channel')">По каналу</button>
+      <button class="tab" onclick="switchTab('search')">По запросу</button>
+    </div>
+
+    <form id="channel-form" class="form" onsubmit="submitChannel(event)">
+      <div class="field">
+        <label>URL или @handle канала</label>
+        <input type="text" id="channel-url" placeholder="@lexfridman или youtube.com/channel/UC..." required>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Количество видео</label>
+          <input type="number" id="channel-limit" value="10" min="1" max="200">
+        </div>
+        <div class="field">
+          <label>Мин. длина (мин)</label>
+          <input type="number" id="channel-min-dur" value="5" min="0">
+        </div>
+      </div>
+      <label class="checkbox-label">
+        <input type="checkbox" id="channel-exclude-shorts" checked>
+        Исключать Shorts (≤60 сек)
+      </label>
+      <button type="submit" class="btn-primary">Получить список видео →</button>
+    </form>
+
+    <form id="search-form" class="form hidden" onsubmit="submitSearch(event)">
+      <div class="field">
+        <label>Поисковый запрос</label>
+        <input type="text" id="search-query" placeholder="machine learning, нейронные сети..." required>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Сортировка</label>
+          <select id="search-order">
+            <option value="relevance">По релевантности</option>
+            <option value="viewCount">По просмотрам</option>
+            <option value="date">По дате</option>
+            <option value="rating">По рейтингу</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Период</label>
+          <select id="search-date">
+            <option value="">Любой</option>
+            <option value="week">Последняя неделя</option>
+            <option value="month">Последний месяц</option>
+            <option value="year">Последний год</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Количество</label>
+          <input type="number" id="search-limit" value="20" min="1" max="200">
+        </div>
+      </div>
+      <button type="submit" class="btn-primary">Найти видео →</button>
+    </form>
+
+    <div id="results" class="results hidden">
+      <div class="results-header">
+        <span id="results-count"></span>
+        <div class="results-actions">
+          <button class="btn-link" onclick="selectAll(true)">Выбрать все</button>
+          <button class="btn-link" onclick="selectAll(false)">Снять все</button>
+          <span id="selected-count" class="selected-count">0 выбрано</span>
+          <button class="btn-primary" onclick="startTranscription()">▶ Транскрибировать</button>
+        </div>
+      </div>
+      <div id="estimate-bar" class="estimate-bar hidden">
+        <span class="estimate-icon">⏱</span>
+        <div class="estimate-body">
+          <div class="estimate-main" id="est-main">—</div>
+          <div class="estimate-sub" id="est-sub"></div>
+        </div>
+        <div class="estimate-hint">≈65% субтитры · Whisper ≈30 мин/час · 2 воркера</div>
+      </div>
+      <div id="video-list" class="video-list"></div>
+    </div>
+
+    <div id="progress-section" class="progress-section hidden">
+      <div class="progress-header">
+        <span class="progress-title">Транскрибация</span>
+        <span id="progress-count">0/0</span>
+      </div>
+      <div class="progress-bar-outer">
+        <div id="progress-fill" class="progress-fill" style="width:0%"></div>
+      </div>
+      <div id="job-list" class="job-list"></div>
+    </div>
+  </section>
+
+  <!-- ══════════ SECTION: LIBRARY ══════════ -->
+  <section id="s-library" class="section hidden">
+    <div class="library-header">
+      <input type="text" id="lib-search" placeholder="Поиск по тексту транскрипций..." oninput="searchLibrary()" class="lib-search-input">
+      <span id="lib-total"></span>
+    </div>
+    <div id="lib-list" class="lib-list"></div>
+    <div id="lib-pagination" class="pagination"></div>
+  </section>
+
+  <!-- ══════════ SECTION: EXPORT ══════════ -->
+  <section id="s-export" class="section hidden">
+    <div class="export-card">
+      <h3>Экспорт в Obsidian</h3>
+      <p class="export-desc">Создаёт .md файлы с YAML frontmatter в твоём vault</p>
+      <div class="field">
+        <label>Путь к Obsidian vault</label>
+        <input type="text" id="obsidian-path" placeholder="/Users/you/vault" value="">
+      </div>
+      <div class="field">
+        <label>Video IDs (через запятую, или пусто = все)</label>
+        <input type="text" id="obsidian-ids" placeholder="dQw4w9WgXcQ, abc123...">
+      </div>
+      <button class="btn-primary" onclick="exportObsidian()">Экспортировать в Obsidian</button>
+      <div id="obsidian-result" class="export-result hidden"></div>
+    </div>
+
+    <div class="export-card">
+      <h3>Скачать ZIP</h3>
+      <p class="export-desc">Все транскрипции в одном архиве (.txt файлы, UTF-8)</p>
+      <div class="field">
+        <label>Video IDs (через запятую, или пусто = все)</label>
+        <input type="text" id="zip-ids" placeholder="dQw4w9WgXcQ, abc123...">
+      </div>
+      <button class="btn-secondary" onclick="downloadZip()">⬇ Скачать ZIP</button>
+    </div>
+  </section>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

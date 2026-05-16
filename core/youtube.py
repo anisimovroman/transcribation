@@ -1,0 +1,272 @@
+import re
+import subprocess
+import logging
+from dataclasses import dataclass, field
+from typing import Optional
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+from config import YOUTUBE_API_KEY
+
+logger = logging.getLogger(__name__)
+
+_youtube_client = None
+_quota_used = {"search_list": 0, "videos_list": 0}
+
+
+@dataclass
+class VideoMeta:
+    video_id: str
+    title: str
+    duration: int
+    view_count: int
+    upload_date: str
+    channel: str
+    url: str
+    has_captions: Optional[bool] = None
+
+
+def get_youtube_client():
+    global _youtube_client
+    if _youtube_client is None:
+        if not YOUTUBE_API_KEY:
+            raise ValueError("YOUTUBE_API_KEY не задан в .env")
+        try:
+            _youtube_client = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        except Exception as e:
+            raise ValueError(f"Не удалось создать YouTube API клиент: {e}") from e
+    return _youtube_client
+
+
+def _parse_channel_url(channel: str) -> str:
+    channel = channel.strip()
+    if channel.startswith("http"):
+        return channel
+    if channel.startswith("@"):
+        return f"https://youtube.com/{channel}"
+    if re.match(r"^UC[a-zA-Z0-9_-]{22}$", channel):
+        return f"https://youtube.com/channel/{channel}"
+    return f"https://youtube.com/@{channel}"
+
+
+def _parse_duration_iso(iso_str: str) -> int:
+    import re
+    m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso_str or "")
+    if not m:
+        return 0
+    h, mn, s = (int(x or 0) for x in m.groups())
+    return h * 3600 + mn * 60 + s
+
+
+def exclude_shorts(videos: list[VideoMeta]) -> list[VideoMeta]:
+    return [v for v in videos if v.duration > 60]
+
+
+def filter_by_duration(
+    videos: list[VideoMeta],
+    min_sec: Optional[int] = None,
+    max_sec: Optional[int] = None,
+) -> list[VideoMeta]:
+    result = videos
+    if min_sec is not None:
+        result = [v for v in result if v.duration >= min_sec]
+    if max_sec is not None:
+        result = [v for v in result if v.duration <= max_sec]
+    return result
+
+
+def sort_by_views(videos: list[VideoMeta], descending: bool = True) -> list[VideoMeta]:
+    return sorted(videos, key=lambda v: v.view_count, reverse=descending)
+
+
+def sort_by_date(videos: list[VideoMeta], descending: bool = True) -> list[VideoMeta]:
+    return sorted(videos, key=lambda v: v.upload_date, reverse=descending)
+
+
+def get_channel_videos(
+    channel_url: str,
+    limit: Optional[int] = None,
+    exclude_shorts_flag: bool = True,
+    min_duration_sec: int = 0,
+    max_duration_sec: Optional[int] = None,
+) -> list[VideoMeta]:
+    url = _parse_channel_url(channel_url)
+    cmd = [
+        "yt-dlp",
+        "--flat-playlist",
+        "--print", "%(id)s\t%(title)s\t%(duration)s\t%(view_count)s\t%(upload_date)s\t%(channel)s",
+        "--no-warnings",
+        "--no-color",
+        url,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        logger.error("yt-dlp timeout для %s", url)
+        return []
+
+    videos: list[VideoMeta] = []
+    for line in result.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        vid_id, title, dur_str, views_str, date, channel = parts[:6]
+        try:
+            duration = int(float(dur_str)) if dur_str not in ("", "NA") else 0
+            view_count = int(float(views_str)) if views_str not in ("", "NA") else 0
+        except (ValueError, TypeError):
+            continue
+        videos.append(VideoMeta(
+            video_id=vid_id,
+            title=title,
+            duration=duration,
+            view_count=view_count,
+            upload_date=date,
+            channel=channel,
+            url=f"https://youtube.com/watch?v={vid_id}",
+        ))
+
+    if exclude_shorts_flag:
+        before = len(videos)
+        videos = exclude_shorts(videos)
+        logger.info("Filtered %d Shorts", before - len(videos))
+
+    videos = filter_by_duration(videos, min_sec=min_duration_sec, max_sec=max_duration_sec)
+
+    if limit is not None:
+        videos = videos[:limit]
+
+    return videos
+
+
+def search_videos(
+    query: str,
+    order: str = "relevance",
+    duration_filter: str = "any",
+    date_filter: Optional[str] = None,
+    limit: int = 50,
+) -> list[VideoMeta]:
+    yt = get_youtube_client()
+    videos: list[VideoMeta] = []
+    page_token = None
+    remaining = min(limit, 200)
+
+    published_after = None
+    if date_filter == "today":
+        from datetime import datetime, timedelta
+        published_after = (datetime.utcnow() - timedelta(days=1)).isoformat() + "Z"
+    elif date_filter == "week":
+        from datetime import datetime, timedelta
+        published_after = (datetime.utcnow() - timedelta(weeks=1)).isoformat() + "Z"
+    elif date_filter == "month":
+        from datetime import datetime, timedelta
+        published_after = (datetime.utcnow() - timedelta(days=30)).isoformat() + "Z"
+    elif date_filter == "year":
+        from datetime import datetime, timedelta
+        published_after = (datetime.utcnow() - timedelta(days=365)).isoformat() + "Z"
+
+    while remaining > 0:
+        page_limit = min(remaining, 50)
+        params = {
+            "q": query,
+            "part": "id,snippet",
+            "type": "video",
+            "maxResults": page_limit,
+            "order": order,
+            "videoDuration": duration_filter,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        if published_after:
+            params["publishedAfter"] = published_after
+
+        try:
+            response = yt.search().list(**params).execute()
+        except HttpError as e:
+            if e.resp.status == 403:
+                raise QuotaExceededError("YouTube API квота исчерпана") from e
+            raise
+
+        _quota_used["search_list"] += 100
+        logger.info("100 units (search.list) | total: %d", sum(_quota_used.values()))
+        if sum(_quota_used.values()) > 8000:
+            logger.warning("YouTube API quota > 8000 units — осторожно")
+
+        ids = [item["id"]["videoId"] for item in response.get("items", [])]
+        if not ids:
+            break
+
+        details = get_video_details(ids)
+        for item in response.get("items", []):
+            vid_id = item["id"]["videoId"]
+            snippet = item["snippet"]
+            detail = details.get(vid_id)
+            if not detail:
+                continue
+            videos.append(VideoMeta(
+                video_id=vid_id,
+                title=snippet["title"],
+                duration=detail["duration"],
+                view_count=detail["view_count"],
+                upload_date=snippet.get("publishedAt", "")[:10].replace("-", ""),
+                channel=snippet["channelTitle"],
+                url=f"https://youtube.com/watch?v={vid_id}",
+            ))
+
+        page_token = response.get("nextPageToken")
+        remaining -= len(ids)
+        if not page_token:
+            break
+
+    before = len(videos)
+    videos = exclude_shorts(videos)
+    filtered_count = before - len(videos)
+    if filtered_count:
+        logger.info("Filtered %d Shorts", filtered_count)
+
+    return videos[:limit]
+
+
+def get_video_details(video_ids: list[str]) -> dict:
+    yt = get_youtube_client()
+    result = {}
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i:i + 50]
+        try:
+            resp = yt.videos().list(
+                part="contentDetails,statistics",
+                id=",".join(batch),
+            ).execute()
+        except HttpError:
+            continue
+        _quota_used["videos_list"] += len(batch)
+        for item in resp.get("items", []):
+            vid_id = item["id"]
+            duration_iso = item["contentDetails"]["duration"]
+            result[vid_id] = {
+                "duration": _parse_duration_iso(duration_iso),
+                "view_count": int(item["statistics"].get("viewCount", 0)),
+            }
+    return result
+
+
+def check_captions(video_ids: list[str]) -> dict[str, bool]:
+    yt = get_youtube_client()
+    result = {}
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i:i + 50]
+        try:
+            resp = yt.videos().list(
+                part="contentDetails",
+                id=",".join(batch),
+            ).execute()
+        except HttpError:
+            continue
+        for item in resp.get("items", []):
+            vid_id = item["id"]
+            result[vid_id] = item["contentDetails"].get("caption") == "true"
+    return result
+
+
+class QuotaExceededError(Exception):
+    pass

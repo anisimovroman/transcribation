@@ -1,0 +1,10 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-dotenv>=1.0.0
+yt-dlp>=2024.11.18
+youtube-transcript-api>=1.2.4
+faster-whisper>=1.0.3
+google-api-python-client>=2.149.0
+rpunct>=0.1.1
+jinja2>=3.1.4
+aiofiles>=23.2.1

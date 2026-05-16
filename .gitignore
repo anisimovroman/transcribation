@@ -1,0 +1,38 @@
+# Секреты
+.env
+
+# Данные пользователя
+data/
+transcripts/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Временные аудио файлы
+*.wav
+*.opus
+*.mp3
+*.m4a
+/tmp/transcribation/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Тесты
+.pytest_cache/
+htmlcov/
+.coverage
