@@ -249,10 +249,39 @@ function _setStopBtn(visible) {
   document.getElementById('stop-btn')?.classList.toggle('hidden', !visible)
 }
 
+function _setResumeBtn(visible) {
+  document.getElementById('resume-btn')?.classList.toggle('hidden', !visible)
+}
+
+function _renderJobVideos(videos, jobId) {
+  document.getElementById('job-list').innerHTML = videos.map(v => {
+    const cls = { completed: 'v-done', failed: 'v-failed', processing: 'v-processing' }[v.status] || 'v-pending'
+    const icon = { completed: '✓', failed: '✕', processing: '⟳' }[v.status] || '·'
+    const orig = currentVideos.find(x => x.video_id === v.video_id)
+    const label = v.title || (orig ? orig.title : v.video_id)
+    const errNote = v.error_msg ? `<div class="video-error">${escHtml(v.error_msg)}</div>` : ''
+    const retryBtn = v.status === 'failed' && v.error_msg !== 'Отменено'
+      ? `<button class="btn-retry" onclick="retryVideo(${jobId},'${v.video_id}')">↺ Повторить</button>`
+      : ''
+    return `<div class="video-item" id="job-item-${v.video_id}">
+      <div class="video-meta">
+        <div class="video-title">${escHtml(label)}</div>
+        ${errNote}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${retryBtn}
+        <span class="video-status ${cls}">${icon}</span>
+      </div>
+      ${buildVideoProgressBar(v)}
+    </div>`
+  }).join('')
+}
+
 function startSSE(jobId, total) {
   if (sseSource) sseSource.close()
   _currentJobId = jobId
   _setStopBtn(true)
+  _setResumeBtn(false)
   if (total) document.getElementById('progress-count').textContent = `0/${total}`
   document.getElementById('progress-fill').style.width = '0%'
   sseSource = new EventSource('/api/progress/' + jobId)
@@ -263,31 +292,7 @@ function startSSE(jobId, total) {
     document.getElementById('progress-fill').style.width = pct + '%'
     document.getElementById('progress-fill').style.background = pct === 100 ? 'var(--done)' : 'var(--accent)'
     document.getElementById('progress-count').textContent = `${done}/${data.total || total}`
-    if (data.videos) {
-      const jid = jobId
-      document.getElementById('job-list').innerHTML = data.videos.map(v => {
-        const cls = { completed: 'v-done', failed: 'v-failed', processing: 'v-processing' }[v.status] || 'v-pending'
-        const icon = { completed: '✓', failed: '✕', processing: '⟳' }[v.status] || '·'
-        const orig = currentVideos.find(x => x.video_id === v.video_id)
-        const label = v.title || (orig ? orig.title : v.video_id)
-        const errNote = v.error_msg ? `<div class="video-error">${escHtml(v.error_msg)}</div>` : ''
-        const retryBtn = v.status === 'failed' && v.error_msg !== 'Отменено'
-          ? `<button class="btn-retry" onclick="retryVideo(${jid},'${v.video_id}')">↺ Повторить</button>`
-          : ''
-        const progressBar = buildVideoProgressBar(v)
-        return `<div class="video-item" id="job-item-${v.video_id}">
-          <div class="video-meta">
-            <div class="video-title">${escHtml(label)}</div>
-            ${errNote}
-          </div>
-          <div style="display:flex;align-items:center;gap:8px">
-            ${retryBtn}
-            <span class="video-status ${cls}">${icon}</span>
-          </div>
-          ${progressBar}
-        </div>`
-      }).join('')
-    }
+    if (data.videos) _renderJobVideos(data.videos, jobId)
     if (data.status === 'completed') {
       sseSource.close()
       _setStopBtn(false)
@@ -296,10 +301,17 @@ function startSSE(jobId, total) {
     } else if (data.status === 'cancelled') {
       sseSource.close()
       _setStopBtn(false)
+      _setResumeBtn(false)
       showToast(`Остановлено · ${data.completed || 0} сохранено`)
     }
   }
   sseSource.onerror = () => { sseSource.close(); _setStopBtn(false) }
+}
+
+function continueTranscription() {
+  if (!_currentJobId) return
+  _setResumeBtn(false)
+  startSSE(_currentJobId, 0)
 }
 
 async function stopTranscription() {
@@ -327,10 +339,16 @@ async function stopTranscription() {
       }
       return
     }
-    // Close SSE immediately — don't wait for next SSE tick
+    // Close SSE immediately — re-render DOM to stop CSS animations
     sseSource?.close()
+    sseSource = null
     _setStopBtn(false)
-    _currentJobId = null
+    btn.disabled = false
+    btn.textContent = '⏹ Стоп'
+    // Re-render with server-provided video states to clear running CSS animations
+    if (payload.videos) _renderJobVideos(payload.videos, _currentJobId)
+    // Keep _currentJobId so "Продолжить" can reconnect SSE
+    _setResumeBtn(true)
     const saved = payload.completed ?? 0
     showToast(saved > 0 ? `Остановлено · ${saved} сохранено` : 'Остановлено')
   } catch (e) {

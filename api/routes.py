@@ -423,6 +423,7 @@ async def progress(job_id: int):
 
             if status["status"] in ("completed", "failed", "cancelled"):
                 break
+            # 'cancelling' keeps streaming so client can watch in-progress videos finish
             await asyncio.sleep(1)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -488,8 +489,10 @@ async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = Non
 
     _cancelled_jobs.discard(job_id)
     with get_conn() as conn:
+        # 'cancelling' → 'cancelled', 'running' → 'completed'
         conn.execute(
-            "UPDATE jobs SET status='completed' WHERE id=? AND status='running'",
+            "UPDATE jobs SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'completed' END "
+            "WHERE id=?",
             (job_id,),
         )
 
@@ -501,7 +504,7 @@ async def cancel_job(job_id: int):
     status = get_job_status(job_id)
     if not status:
         raise HTTPException(status_code=404, detail="Задача не найдена")
-    if status["status"] not in ("running",):
+    if status["status"] not in ("running", "cancelling"):
         raise HTTPException(status_code=400, detail="Задача уже завершена")
     _cancelled_jobs.add(job_id)
     with get_conn() as conn:
@@ -514,11 +517,16 @@ async def cancel_job(job_id: int):
             "SELECT COUNT(*) FROM job_videos WHERE job_id=? AND status='failed'", (job_id,)
         ).fetchone()[0]
         conn.execute(
-            "UPDATE jobs SET failed=?, status='cancelled' WHERE id=?",
+            "UPDATE jobs SET failed=?, status='cancelling' WHERE id=?",
             (failed, job_id),
         )
-    completed = get_job_status(job_id)["completed"]
-    return {"job_id": job_id, "status": "cancelled", "completed": completed}
+    updated = get_job_status(job_id)
+    return {
+        "job_id": job_id,
+        "status": "cancelling",
+        "completed": updated["completed"],
+        "videos": updated["videos"],
+    }
 
 
 # ─── Retry ──────────────────────────────────────────────────────
