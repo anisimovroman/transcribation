@@ -23,6 +23,28 @@
 
   <!-- ══════════ SECTION: TRANSCRIBE ══════════ -->
   <section id="s-transcribe" class="section">
+
+    <!-- YouTube API Key banner -->
+    <div id="api-key-card" class="api-key-card hidden">
+      <div class="api-key-inner">
+        <div class="api-key-left">
+          <div class="api-key-title">🔑 YouTube API ключ</div>
+          <div id="api-key-status" class="api-key-status">Ключ не задан — без него поиск и загрузка каналов не работают</div>
+        </div>
+        <div class="api-key-right">
+          <div class="api-key-row">
+            <input type="password" id="api-key-input" placeholder="Вставь AIza..." autocomplete="off">
+            <button class="btn-link api-key-toggle" onclick="toggleKeyVisibility()" title="Показать/скрыть">👁</button>
+            <button class="btn-primary api-key-save" id="api-key-save-btn" onclick="saveApiKey()">Сохранить</button>
+          </div>
+          <div class="api-key-hint">
+            Получить ключ: <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a>
+            → Создай проект → YouTube Data API v3 → Credentials → API Key
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="tabs">
       <button class="tab active" onclick="switchTab('channel')">По каналу</button>
       <button class="tab" onclick="switchTab('search')">По запросу</button>
@@ -113,6 +135,77 @@
       </div>
       <div id="job-list" class="job-list"></div>
     </div>
+    <!-- Instructions accordion -->
+    <details class="instructions" id="instructions">
+      <summary class="instructions-toggle">
+        <span>📖 Как пользоваться программой</span>
+        <span class="instructions-arrow">›</span>
+      </summary>
+      <div class="instructions-body">
+        <div class="instr-grid">
+
+          <div class="instr-step">
+            <div class="instr-num">1</div>
+            <div class="instr-content">
+              <strong>Получи YouTube API ключ</strong>
+              <p>Нужен для поиска видео и загрузки каналов. Бесплатно, квота 10 000 запросов/день (~100–200 поисков).</p>
+              <ol>
+                <li>Зайди на <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a></li>
+                <li>Создай проект → <b>APIs &amp; Services → Enable APIs → YouTube Data API v3</b></li>
+                <li><b>Credentials → Create Credentials → API Key</b></li>
+                <li>Скопируй ключ и вставь в поле выше</li>
+              </ol>
+            </div>
+          </div>
+
+          <div class="instr-step">
+            <div class="instr-num">2</div>
+            <div class="instr-content">
+              <strong>Найди видео</strong>
+              <p>Два способа:</p>
+              <ul>
+                <li><b>По каналу</b> — вставь @handle или ссылку на канал, укажи сколько последних видео загрузить</li>
+                <li><b>По запросу</b> — введи тему (например «машинное обучение»), выбери сортировку и период</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="instr-step">
+            <div class="instr-num">3</div>
+            <div class="instr-content">
+              <strong>Выбери видео и запусти транскрибацию</strong>
+              <p>Отметь нужные видео галочкой и нажми <b>▶ Транскрибировать</b>. Прогресс показывается в реальном времени.</p>
+              <p>Оценка времени выполнения появляется автоматически после загрузки списка.</p>
+            </div>
+          </div>
+
+          <div class="instr-step">
+            <div class="instr-num">4</div>
+            <div class="instr-content">
+              <strong>Как работает транскрибация</strong>
+              <ul>
+                <li>🏃 <b>Субтитры YouTube</b> — если у видео есть субтитры, берёт их мгновенно (~3 сек)</li>
+                <li>🎙 <b>Whisper AI</b> — если субтитров нет, скачивает аудио и транскрибирует локально на твоём компьютере. На Apple M-серии работает быстро (~2–5 мин/час видео).</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="instr-step">
+            <div class="instr-num">5</div>
+            <div class="instr-content">
+              <strong>Найди и экспортируй результаты</strong>
+              <ul>
+                <li><b>Библиотека</b> — все транскрипции с поиском по тексту</li>
+                <li><b>Экспорт</b> — выгрузить в Obsidian vault или скачать ZIP-архивом</li>
+                <li><b>Настройки</b> — выбери папку для сохранения, режим нагрузки и формат файлов</li>
+              </ul>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </details>
+
   </section>
 
   <!-- ══════════ SECTION: LIBRARY ══════════ -->

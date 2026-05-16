@@ -20,6 +20,7 @@ from core.storage import (
 )
 from core.postprocess import postprocess
 from core.export import export_to_obsidian, export_batch_zip
+import config as _cfg
 from config import MAX_WORKERS, TRANSCRIPTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -82,19 +83,57 @@ async def health():
 
 # ─── Settings ───────────────────────────────────────────────────
 
+def _update_env_file(key: str, value: str):
+    """Upsert a KEY=value line in .env, preserving all other lines."""
+    env_path = _cfg.BASE_DIR / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    found = False
+    result = []
+    for line in lines:
+        if line.startswith(f"{key}=") or line.startswith(f"{key} ="):
+            result.append(f"{key}={value}")
+            found = True
+        else:
+            result.append(line)
+    if not found:
+        result.append(f"{key}={value}")
+    env_path.write_text("\n".join(result) + "\n", encoding="utf-8")
+
+
+def _validate_youtube_key(api_key: str) -> str:
+    """Try a cheap API call; return '' on success or an error string."""
+    try:
+        from googleapiclient.discovery import build
+        svc = build("youtube", "v3", developerKey=api_key)
+        svc.videos().list(part="id", id="jNQXAC9IVRw").execute()
+        return ""
+    except Exception as e:
+        msg = str(e)
+        if "API key not valid" in msg or "keyInvalid" in msg:
+            return "Неверный API ключ"
+        if "quota" in msg.lower():
+            return ""   # quota error = key valid, just exhausted
+        return f"Ошибка проверки: {msg[:120]}"
+
+
 class SettingsRequest(BaseModel):
     mode: Optional[str] = None
     transcripts_dir: Optional[str] = None
     save_mode: Optional[str] = None
     single_file: Optional[str] = None
+    youtube_api_key: Optional[str] = None
 
 
 @router.get("/settings")
 async def get_settings():
+    key = _cfg.YOUTUBE_API_KEY
+    masked = (key[:4] + "·" * 20 + key[-4:]) if len(key) > 8 else ("·" * len(key) if key else "")
     return {
         **_settings,
         "modes": MODES,
         "default_transcripts_dir": str(TRANSCRIPTS_DIR),
+        "youtube_key_set": bool(key),
+        "youtube_key_masked": masked,
     }
 
 
@@ -119,6 +158,22 @@ async def update_settings(req: SettingsRequest):
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Папка недоступна: {e}")
             _settings["transcripts_dir"] = str(path)
+
+    if req.youtube_api_key is not None:
+        key = req.youtube_api_key.strip()
+        if not key:
+            raise HTTPException(status_code=400, detail="Ключ не может быть пустым")
+        err = await asyncio.to_thread(_validate_youtube_key, key)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+        _update_env_file("YOUTUBE_API_KEY", key)
+        # Hot-reload in running process
+        import importlib
+        _cfg.YOUTUBE_API_KEY = key
+        os.environ["YOUTUBE_API_KEY"] = key
+        # Reset YouTube client so it picks up new key
+        import core.youtube as _yt
+        _yt._youtube_client = None
 
     if req.save_mode is not None:
         if req.save_mode not in ("separate", "single"):

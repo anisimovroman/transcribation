@@ -605,5 +605,76 @@ async function applyMode(mode) {
   }
 }
 
+// ─── YouTube API Key ──────────────────────────────────────────────
+
+async function initApiKeyBanner() {
+  try {
+    const r = await fetch('/api/settings')
+    const data = await r.json()
+    const card = document.getElementById('api-key-card')
+    const status = document.getElementById('api-key-status')
+    const input = document.getElementById('api-key-input')
+    card.classList.remove('hidden')
+
+    if (data.youtube_key_set) {
+      card.classList.add('has-key')
+      status.textContent = '✓ Ключ подключён: ' + data.youtube_key_masked
+      status.className = 'api-key-status ok'
+      input.placeholder = 'Введи новый ключ чтобы заменить'
+    } else {
+      status.textContent = 'Ключ не задан — без него поиск и загрузка каналов не работают'
+      status.className = 'api-key-status'
+      // Auto-open instructions if no key
+      const details = document.getElementById('instructions')
+      if (details) details.open = true
+    }
+  } catch { /* non-critical */ }
+}
+
+function toggleKeyVisibility() {
+  const inp = document.getElementById('api-key-input')
+  inp.type = inp.type === 'password' ? 'text' : 'password'
+}
+
+async function saveApiKey() {
+  const key = document.getElementById('api-key-input').value.trim()
+  if (!key) { showToast('Введи API ключ', true); return }
+
+  const btn = document.getElementById('api-key-save-btn')
+  const status = document.getElementById('api-key-status')
+  btn.textContent = 'Проверяю...'
+  btn.disabled = true
+  status.textContent = 'Проверяю ключ...'
+  status.className = 'api-key-status'
+
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ youtube_api_key: key }),
+    })
+    const data = await r.json()
+    if (!r.ok) {
+      status.textContent = '✗ ' + fmtErr(data, r.status)
+      status.className = 'api-key-status err'
+      return
+    }
+    document.getElementById('api-key-card').classList.add('has-key')
+    status.textContent = '✓ Ключ сохранён и проверен'
+    status.className = 'api-key-status ok'
+    document.getElementById('api-key-input').value = ''
+    document.getElementById('api-key-input').placeholder = 'Введи новый ключ чтобы заменить'
+    showToast('✓ YouTube API ключ сохранён')
+  } catch (e) {
+    status.textContent = '✗ ' + e.message
+    status.className = 'api-key-status err'
+  } finally {
+    btn.textContent = 'Сохранить'
+    btn.disabled = false
+  }
+}
+
 // Init settings on page load
-window.addEventListener('load', () => loadSettings())
+window.addEventListener('load', () => {
+  loadSettings()
+  initApiKeyBanner()
+})
