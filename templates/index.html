@@ -9,6 +9,7 @@
 <body>
 
 <div class="app">
+  <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Сменить тему">🌙</button>
   <header class="header">
     <h1>◈ YouTube Transcription Tool</h1>
     <p class="subtitle">Транскрибируй каналы и поисковые запросы · <a href="/docs" target="_blank">API docs</a></p>
@@ -48,6 +49,7 @@
     <div class="tabs">
       <button class="tab active" onclick="switchTab('channel')">По каналу</button>
       <button class="tab" onclick="switchTab('search')">По запросу</button>
+      <button class="tab" onclick="switchTab('url')">По ссылке</button>
     </div>
 
     <form id="channel-form" class="form" onsubmit="submitChannel(event)">
@@ -102,6 +104,17 @@
         </div>
       </div>
       <button type="submit" class="btn-primary">Найти видео →</button>
+    </form>
+
+    <form id="url-form" class="form hidden" onsubmit="submitUrls(event)">
+      <div class="field">
+        <label>Ссылки на видео — по одной на строке</label>
+        <textarea id="url-input" class="url-textarea"
+          placeholder="https://youtube.com/watch?v=dQw4w9WgXcQ&#10;https://youtu.be/ScMzIvxBSi4&#10;dQw4w9WgXcQ"
+          rows="5" required></textarea>
+        <div class="url-hint">Поддерживаются: youtube.com/watch?v=…, youtu.be/…, Shorts, прямые ID. Можно вставить сразу много.</div>
+      </div>
+      <button type="submit" class="btn-primary">Загрузить видео →</button>
     </form>
 
     <div id="results" class="results hidden">
@@ -213,6 +226,20 @@
     <div class="library-header">
       <input type="text" id="lib-search" placeholder="Поиск по тексту транскрипций..." oninput="searchLibrary()" class="lib-search-input">
       <span id="lib-total"></span>
+      <button class="btn-danger" onclick="clearAllTranscripts()">🗑 Очистить всё</button>
+    </div>
+    <div class="lib-filters">
+      <select id="filter-channel" onchange="applyFilters()" class="lib-filter-select">
+        <option value="">Все каналы</option>
+      </select>
+      <select id="filter-method" onchange="applyFilters()" class="lib-filter-select">
+        <option value="">Все методы</option>
+        <option value="captions">Субтитры YouTube</option>
+        <option value="whisper">Whisper AI</option>
+      </select>
+      <input type="date" id="filter-date-from" onchange="applyFilters()" class="lib-filter-date" title="Дата публикации от">
+      <input type="date" id="filter-date-to" onchange="applyFilters()" class="lib-filter-date" title="Дата публикации до">
+      <button class="btn-link" onclick="resetFilters()" id="filters-reset" style="display:none">✕ Сбросить</button>
     </div>
     <div id="lib-list" class="lib-list"></div>
     <div id="lib-pagination" class="pagination"></div>
@@ -290,6 +317,15 @@
         </div>
         <div id="single-file-status" class="path-status"></div>
       </div>
+    </div>
+
+    <div class="settings-card">
+      <div class="settings-card-title">Временные метки</div>
+      <p class="settings-desc">Добавлять <code>[ЧЧ:ММ:СС]</code> к каждой фразе. Удобно для навигации по тексту, особенно для длинных видео.</p>
+      <label class="checkbox-label">
+        <input type="checkbox" id="timestamps-toggle" onchange="setTimestamps(this.checked)" checked>
+        Включить временные метки в транскрипцию
+      </label>
     </div>
 
     <div class="settings-card">

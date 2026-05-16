@@ -81,7 +81,7 @@ def test_txt_file_is_utf8(tmp_db):
 
 
 def test_create_job_and_update_status(tmp_db):
-    job_id = tmp_db.create_job("transcribe", video_ids=["v1", "v2", "v3"])
+    job_id = tmp_db.create_job("transcribe", videos=[{"video_id": v} for v in ["v1", "v2", "v3"]])
     assert isinstance(job_id, int)
     with tmp_db.get_conn() as conn:
         count = conn.execute("SELECT COUNT(*) FROM job_videos WHERE job_id=?", (job_id,)).fetchone()[0]

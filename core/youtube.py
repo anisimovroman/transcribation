@@ -38,6 +38,121 @@ def get_youtube_client():
     return _youtube_client
 
 
+_VIDEO_ID_RE = re.compile(r'[a-zA-Z0-9_-]{11}')
+_VIDEO_URL_RE = re.compile(
+    r'(?:v=|youtu\.be/|/shorts/|/embed/|/v/)([a-zA-Z0-9_-]{11})'
+)
+
+
+def parse_video_id(text: str) -> Optional[str]:
+    """Extract YouTube video ID from a URL or raw ID string. Returns None if invalid."""
+    text = text.strip()
+    if not text:
+        return None
+    # Raw 11-char ID
+    if re.fullmatch(r'[a-zA-Z0-9_-]{11}', text):
+        return text
+    # URL patterns: watch?v=, youtu.be/, /shorts/, /embed/, /v/
+    m = _VIDEO_URL_RE.search(text)
+    return m.group(1) if m else None
+
+
+def get_videos_by_ids(video_ids: list[str]) -> list["VideoMeta"]:
+    """Fetch VideoMeta for specific video IDs. Uses YouTube API if key set, else yt-dlp."""
+    if not video_ids:
+        return []
+    import config as _cfg
+    if _cfg.YOUTUBE_API_KEY:
+        return _get_videos_api(video_ids)
+    return _get_videos_ytdlp(video_ids)
+
+
+def _get_videos_api(video_ids: list[str]) -> list["VideoMeta"]:
+    yt = get_youtube_client()
+    videos: list[VideoMeta] = []
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i:i + 50]
+        try:
+            resp = yt.videos().list(
+                part="snippet,contentDetails,statistics",
+                id=",".join(batch),
+            ).execute()
+        except HttpError as e:
+            if e.resp.status == 403:
+                raise QuotaExceededError("YouTube API квота исчерпана") from e
+            raise
+        _quota_used["videos_list"] += len(batch)
+        for item in resp.get("items", []):
+            vid_id = item["id"]
+            snippet = item["snippet"]
+            duration = _parse_duration_iso(item["contentDetails"]["duration"])
+            view_count = int(item["statistics"].get("viewCount", 0))
+            upload_date = snippet.get("publishedAt", "")[:10].replace("-", "")
+            videos.append(VideoMeta(
+                video_id=vid_id,
+                title=snippet["title"],
+                duration=duration,
+                view_count=view_count,
+                upload_date=upload_date,
+                channel=snippet["channelTitle"],
+                url=f"https://youtube.com/watch?v={vid_id}",
+            ))
+    return videos
+
+
+def _get_videos_ytdlp(video_ids: list[str]) -> list["VideoMeta"]:
+    """Fetch metadata via yt-dlp when no API key is available."""
+    urls = [f"https://youtube.com/watch?v={vid}" for vid in video_ids]
+    cmd = [
+        "yt-dlp", "--no-playlist", "--skip-download",
+        "--print", "%(id)s\t%(title)s\t%(duration)s\t%(view_count)s\t%(upload_date)s\t%(channel)s",
+        "--no-warnings", "--no-color",
+        *urls,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        logger.error("yt-dlp timeout fetching video metadata")
+        return []
+
+    videos: list[VideoMeta] = []
+    seen: set[str] = set()
+    for line in result.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        vid_id, title, dur_str, views_str, date, channel = parts[:6]
+        if vid_id in seen:
+            continue
+        seen.add(vid_id)
+        try:
+            duration = int(float(dur_str)) if dur_str not in ("", "NA") else 0
+            view_count = int(float(views_str)) if views_str not in ("", "NA") else 0
+        except (ValueError, TypeError):
+            duration, view_count = 0, 0
+        videos.append(VideoMeta(
+            video_id=vid_id,
+            title=title or vid_id,
+            duration=duration,
+            view_count=view_count,
+            upload_date=date,
+            channel=channel,
+            url=f"https://youtube.com/watch?v={vid_id}",
+        ))
+
+    # For IDs not returned by yt-dlp, add stub entries so user can still transcribe
+    returned_ids = {v.video_id for v in videos}
+    for vid_id in video_ids:
+        if vid_id not in returned_ids:
+            logger.warning("yt-dlp returned no metadata for %s, using stub", vid_id)
+            videos.append(VideoMeta(
+                video_id=vid_id, title=vid_id, duration=0,
+                view_count=0, upload_date="", channel="",
+                url=f"https://youtube.com/watch?v={vid_id}",
+            ))
+    return videos
+
+
 def _parse_channel_url(channel: str) -> str:
     channel = channel.strip()
     if channel.startswith("http"):

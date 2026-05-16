@@ -28,6 +28,10 @@ def isolated_env(tmp_path, monkeypatch):
     import core.export as export_mod
     importlib.reload(export_mod)
 
+    # Patch routes _settings so each test gets its own isolated transcripts dir
+    import api.routes as routes_mod
+    monkeypatch.setitem(routes_mod._settings, "transcripts_dir", str(tmp_path / "transcripts"))
+
     yield {"tmp": tmp_path, "storage": storage}
 
 
@@ -104,7 +108,7 @@ def test_e2e_channel_to_txt(client, isolated_env):
         assert len(video_ids) == 3
 
         # Step 2: Transcribe
-        r = client.post("/api/transcribe", json={"video_ids": video_ids})
+        r = client.post("/api/transcribe", json={"videos": data["videos"]})
         assert r.status_code == 200
         job_id = r.json()["job_id"]
         assert isinstance(job_id, int)
@@ -155,8 +159,7 @@ def test_e2e_search_to_txt(client, isolated_env):
             assert videos[0]["view_count"] >= videos[1]["view_count"]
 
         # Step 2: Transcribe first 2
-        video_ids = [v["video_id"] for v in videos[:2]]
-        r = client.post("/api/transcribe", json={"video_ids": video_ids})
+        r = client.post("/api/transcribe", json={"videos": videos[:2]})
         assert r.status_code == 200
         job_id = r.json()["job_id"]
 
@@ -168,7 +171,7 @@ def test_e2e_search_to_txt(client, isolated_env):
 
         # Step 3: Test cache — repeat transcription should be fast
         start = time.time()
-        r = client.post("/api/transcribe", json={"video_ids": video_ids})
+        r = client.post("/api/transcribe", json={"videos": videos[:2]})
         job_id2 = r.json()["job_id"]
         elapsed = time.time() - start
         assert elapsed < 5, f"Cache replay took {elapsed:.1f}s — должен быть быстрым"
@@ -203,5 +206,5 @@ def test_channel_invalid_returns_404(client):
 
 
 def test_transcribe_empty_list_returns_422(client):
-    r = client.post("/api/transcribe", json={"video_ids": []})
+    r = client.post("/api/transcribe", json={"videos": []})
     assert r.status_code == 422

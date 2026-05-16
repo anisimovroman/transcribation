@@ -11,12 +11,13 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field
 import json
 
-from core.youtube import get_channel_videos, search_videos, QuotaExceededError
-from core.transcriber import transcribe_video
+from core.youtube import get_channel_videos, search_videos, get_videos_by_ids, parse_video_id, QuotaExceededError
+from core.transcriber import transcribe_video, segments_to_text
 from core.storage import (
     get_conn, is_cached, get_cached, save_transcript,
     create_job, update_video_status, get_pending_videos,
     search_transcripts, get_job_status, append_to_single_file,
+    reset_video_for_retry,
 )
 from core.postprocess import postprocess
 from core.export import export_to_obsidian, export_batch_zip
@@ -33,6 +34,7 @@ _settings = {
     "mode": "balanced",
     "save_mode": "separate",   # "separate" | "single"
     "single_file": "",         # path when save_mode == "single"
+    "timestamps": True,        # include [HH:MM:SS] markers in transcription text
 }
 
 MODES = {
@@ -122,6 +124,7 @@ class SettingsRequest(BaseModel):
     save_mode: Optional[str] = None
     single_file: Optional[str] = None
     youtube_api_key: Optional[str] = None
+    timestamps: Optional[bool] = None
 
 
 @router.get("/settings")
@@ -191,6 +194,9 @@ async def update_settings(req: SettingsRequest):
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Файл недоступен: {e}")
             _settings["single_file"] = str(p)
+
+    if req.timestamps is not None:
+        _settings["timestamps"] = req.timestamps
 
     return _settings
 
@@ -308,6 +314,37 @@ async def pick_file(body: dict = {}):
     return {"path": str(p)}
 
 
+class VideoUrlsRequest(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=200)
+
+
+@router.post("/videos")
+async def videos_by_urls(req: VideoUrlsRequest):
+    """Resolve a list of YouTube URLs/IDs into VideoMeta objects."""
+    video_ids: list[str] = []
+    invalid: list[str] = []
+    seen: set[str] = set()
+    for raw in req.urls:
+        vid_id = parse_video_id(raw.strip())
+        if vid_id and vid_id not in seen:
+            video_ids.append(vid_id)
+            seen.add(vid_id)
+        elif raw.strip():
+            invalid.append(raw.strip())
+
+    if not video_ids:
+        raise HTTPException(status_code=400, detail="Не найдено валидных YouTube ссылок или ID")
+
+    try:
+        videos = await asyncio.to_thread(get_videos_by_ids, video_ids)
+    except QuotaExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"videos": [v.__dict__ for v in videos], "total": len(videos), "invalid": invalid}
+
+
 @router.post("/channel")
 async def channel_videos(req: ChannelRequest):
     try:
@@ -399,7 +436,13 @@ async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = Non
                 )
 
                 if result.status == "completed":
-                    text = postprocess(result.text, result.method, result.language)
+                    use_ts = _settings.get("timestamps", True)
+                    if result.segments and use_ts:
+                        # Timestamps mode: format with [HH:MM:SS] markers, skip postprocess
+                        text = segments_to_text(result.segments, with_timestamps=True)
+                    else:
+                        text = postprocess(result.text, result.method, result.language)
+                    segs_json = json.dumps(result.segments or [], ensure_ascii=False)
                     save_transcript(
                         result,
                         text,
@@ -409,6 +452,7 @@ async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = Non
                         upload_date=v.get("upload_date", ""),
                         out_dir=save_dir,
                         single_file=single_file,
+                        segments_json=segs_json,
                     )
                     update_video_status(job_id, vid_id, "completed")
                     logger.info("Saved: %s (%s)", vid_id, result.method)
@@ -426,26 +470,77 @@ async def _run_job(job_id: int, videos: list[dict], out_dir: Optional[str] = Non
         conn.execute("UPDATE jobs SET status='completed' WHERE id=?", (job_id,))
 
 
+# ─── Retry ──────────────────────────────────────────────────────
+
+@router.post("/retry/{job_id}/{video_id}")
+async def retry_video(job_id: int, video_id: str, background_tasks: BackgroundTasks):
+    video_row = reset_video_for_retry(job_id, video_id)
+    if not video_row:
+        raise HTTPException(status_code=404, detail="Видео не найдено или не в статусе failed")
+    video_dict = dict(video_row)
+    background_tasks.add_task(_run_job, job_id, [video_dict])
+    return {"job_id": job_id, "video_id": video_id, "status": "retrying"}
+
+
 # ─── Results ────────────────────────────────────────────────────
+
+@router.get("/channels")
+async def list_channels():
+    """Return distinct channel names for filter dropdown."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT channel FROM transcripts WHERE status='completed' AND channel != '' ORDER BY channel"
+        ).fetchall()
+    return {"channels": [r[0] for r in rows]}
+
 
 @router.get("/results")
 async def results(
     q: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
+    channel: Optional[str] = Query(default=None),
+    method: Optional[str] = Query(default=None),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
 ):
-    if q:
+    if q and not (channel or method or date_from or date_to):
         return search_transcripts(q, page=page, per_page=per_page)
+
+    conditions = ["status='completed'"]
+    params: list = []
+
+    if q:
+        conditions.append("(title LIKE ? OR channel LIKE ? OR text LIKE ?)")
+        like = f"%{q}%"
+        params += [like, like, like]
+    if channel:
+        conditions.append("channel = ?")
+        params.append(channel)
+    if method:
+        if method == "whisper":
+            conditions.append("method LIKE 'whisper_%' OR method LIKE 'mlx_%'")
+        elif method == "captions":
+            conditions.append("method = 'youtube_captions'")
+        else:
+            conditions.append("method = ?")
+            params.append(method)
+    if date_from:
+        conditions.append("upload_date >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("upload_date <= ?")
+        params.append(date_to)
+
+    where = " AND ".join(conditions)
+    offset = (page - 1) * per_page
     with get_conn() as conn:
-        total = conn.execute(
-            "SELECT COUNT(*) FROM transcripts WHERE status='completed'"
-        ).fetchone()[0]
+        total = conn.execute(f"SELECT COUNT(*) FROM transcripts WHERE {where}", params).fetchone()[0]
         rows = conn.execute(
-            "SELECT video_id, title, channel, duration_sec, method, language, "
-            "upload_date, txt_path, created_at "
-            "FROM transcripts WHERE status='completed' ORDER BY created_at DESC "
-            "LIMIT ? OFFSET ?",
-            (per_page, (page - 1) * per_page),
+            f"SELECT video_id, title, channel, duration_sec, method, language, "
+            f"upload_date, txt_path, created_at "
+            f"FROM transcripts WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params + [per_page, offset],
         ).fetchall()
     return {"results": [dict(r) for r in rows], "total": total, "page": page}
 
@@ -456,6 +551,95 @@ async def get_transcript(video_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="Транскрипция не найдена")
     return row
+
+
+@router.delete("/transcripts/{video_id}")
+async def delete_transcript(video_id: str):
+    with get_conn() as conn:
+        row = conn.execute("SELECT txt_path FROM transcripts WHERE video_id=?", (video_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Транскрипция не найдена")
+        conn.execute("DELETE FROM transcripts WHERE video_id=?", (video_id,))
+        conn.execute("DELETE FROM transcripts_fts WHERE video_id=?", (video_id,))
+    # Delete the .txt file if it exists
+    txt_path = (row["txt_path"] or "").strip()
+    if txt_path:
+        try:
+            Path(txt_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+    return {"deleted": video_id}
+
+
+class DeleteBatchRequest(BaseModel):
+    video_ids: list[str] = []  # empty = delete all
+
+
+@router.post("/transcripts/delete-batch")
+async def delete_transcripts_batch(req: DeleteBatchRequest):
+    with get_conn() as conn:
+        if req.video_ids:
+            rows = conn.execute(
+                f"SELECT video_id, txt_path FROM transcripts WHERE video_id IN ({','.join('?' * len(req.video_ids))})",
+                req.video_ids,
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT video_id, txt_path FROM transcripts").fetchall()
+
+        ids = [r["video_id"] for r in rows]
+        txt_paths = [r["txt_path"] for r in rows]
+
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            conn.execute(f"DELETE FROM transcripts WHERE video_id IN ({placeholders})", ids)
+            conn.execute(f"DELETE FROM transcripts_fts WHERE video_id IN ({placeholders})", ids)
+
+    for path in txt_paths:
+        if path and path.strip():
+            try:
+                Path(path.strip()).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    return {"deleted": len(ids)}
+
+
+# ─── SRT export ─────────────────────────────────────────────────
+
+@router.get("/transcripts/{video_id}/srt")
+async def get_srt(video_id: str):
+    import json as _json
+    row = get_cached(video_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Транскрипция не найдена")
+    segs_raw = row.get("segments_json", "") or ""
+    try:
+        segs = _json.loads(segs_raw) if segs_raw else []
+    except Exception:
+        segs = []
+    if not segs:
+        raise HTTPException(status_code=404, detail="Сегменты с временными метками недоступны для этой транскрипции")
+
+    def srt_ts(sec: float) -> str:
+        s = int(sec)
+        ms = int((sec - s) * 1000)
+        return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d},{ms:03d}"
+
+    lines = []
+    for i, seg in enumerate(segs, 1):
+        lines.append(str(i))
+        lines.append(f"{srt_ts(seg['start'])} --> {srt_ts(seg['end'])}")
+        lines.append(seg.get("text", "").strip())
+        lines.append("")
+
+    srt_content = "\n".join(lines)
+    safe_title = "".join(c if c.isalnum() or c in "_ " else "_" for c in (row.get("title") or video_id)[:50])
+    filename = f"{safe_title}_{video_id}.srt"
+    return Response(
+        content=srt_content.encode("utf-8"),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ─── Time estimate ──────────────────────────────────────────────

@@ -38,6 +38,10 @@ def _migrate(conn: sqlite3.Connection):
         "upload_date":  "TEXT DEFAULT ''",
         "error_msg":    "TEXT DEFAULT ''",
     }
+
+    tr_additions = {
+        "segments_json": "TEXT DEFAULT ''",
+    }
     for col, col_def in additions.items():
         if col not in existing:
             conn.execute(f"ALTER TABLE job_videos ADD COLUMN {col} {col_def}")
@@ -50,6 +54,9 @@ def _migrate(conn: sqlite3.Connection):
     }
     if "text" not in tr_existing:
         conn.execute("ALTER TABLE transcripts ADD COLUMN text TEXT DEFAULT ''")
+    for col, col_def in tr_additions.items():
+        if col not in tr_existing:
+            conn.execute(f"ALTER TABLE transcripts ADD COLUMN {col} {col_def}")
 
     # Recreate FTS if it uses old content-table style
     old_fts = conn.execute(
@@ -63,18 +70,19 @@ def init_db():
     with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS transcripts (
-                video_id     TEXT PRIMARY KEY,
-                title        TEXT NOT NULL DEFAULT '',
-                channel      TEXT DEFAULT '',
-                duration_sec INTEGER DEFAULT 0,
-                method       TEXT DEFAULT '',
-                language     TEXT DEFAULT '',
-                text         TEXT DEFAULT '',
-                txt_path     TEXT DEFAULT '',
-                view_count   INTEGER DEFAULT 0,
-                upload_date  TEXT DEFAULT '',
-                created_at   TEXT DEFAULT (datetime('now')),
-                status       TEXT DEFAULT 'pending'
+                video_id      TEXT PRIMARY KEY,
+                title         TEXT NOT NULL DEFAULT '',
+                channel       TEXT DEFAULT '',
+                duration_sec  INTEGER DEFAULT 0,
+                method        TEXT DEFAULT '',
+                language      TEXT DEFAULT '',
+                text          TEXT DEFAULT '',
+                txt_path      TEXT DEFAULT '',
+                view_count    INTEGER DEFAULT 0,
+                upload_date   TEXT DEFAULT '',
+                segments_json TEXT DEFAULT '',
+                created_at    TEXT DEFAULT (datetime('now')),
+                status        TEXT DEFAULT 'pending'
             );
 
             CREATE TABLE IF NOT EXISTS jobs (
@@ -189,6 +197,7 @@ def save_transcript(
     upload_date: str = "",
     out_dir: Optional[str] = None,
     single_file: Optional[str] = None,
+    segments_json: str = "",
 ) -> Path:
     final_title = title or result.video_id
     if single_file:
@@ -215,11 +224,11 @@ def save_transcript(
         conn.execute(
             """INSERT OR REPLACE INTO transcripts
                (video_id, title, channel, duration_sec, method, language,
-                text, txt_path, view_count, upload_date, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')""",
+                text, txt_path, view_count, upload_date, segments_json, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')""",
             (result.video_id, final_title, channel,
              result.duration_sec, result.method, result.language,
-             text, str(txt_path), view_count, upload_date),
+             text, str(txt_path), view_count, upload_date, segments_json),
         )
         conn.execute(
             "INSERT OR REPLACE INTO transcripts_fts(video_id, title, channel, text) "
@@ -290,7 +299,7 @@ def get_job_status(job_id: int) -> Optional[dict]:
         if not job:
             return None
         videos = conn.execute(
-            "SELECT video_id, status, title, error_msg FROM job_videos "
+            "SELECT video_id, status, title, error_msg, duration_sec FROM job_videos "
             "WHERE job_id=? ORDER BY position",
             (job_id,),
         ).fetchall()
@@ -298,6 +307,29 @@ def get_job_status(job_id: int) -> Optional[dict]:
         **dict(job),
         "videos": [dict(v) for v in videos],
     }
+
+
+def reset_video_for_retry(job_id: int, video_id: str) -> Optional[dict]:
+    """Reset a failed video to pending and reopen the job. Returns video row or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM job_videos WHERE job_id=? AND video_id=? AND status='failed'",
+            (job_id, video_id),
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE job_videos SET status='pending', error_msg='' WHERE job_id=? AND video_id=?",
+            (job_id, video_id),
+        )
+        failed = conn.execute(
+            "SELECT COUNT(*) FROM job_videos WHERE job_id=? AND status='failed'", (job_id,)
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE jobs SET failed=?, status='running' WHERE id=?",
+            (failed, job_id),
+        )
+    return dict(row)
 
 
 def _fts_query(raw: str) -> str:

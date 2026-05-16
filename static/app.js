@@ -19,16 +19,29 @@ function showSection(name) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'))
   document.getElementById('s-' + name).classList.remove('hidden')
   event.target.classList.add('active')
-  if (name === 'library') loadLibrary()
+  if (name === 'library') { loadLibrary(); loadChannelFilter() }
   if (name === 'settings') loadSettings()
 }
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['channel', 'search'][i] === tab))
+  const tabs = ['channel', 'search', 'url']
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', tabs[i] === tab))
   document.getElementById('channel-form').classList.toggle('hidden', tab !== 'channel')
   document.getElementById('search-form').classList.toggle('hidden', tab !== 'search')
+  document.getElementById('url-form').classList.toggle('hidden', tab !== 'url')
   document.getElementById('results').classList.add('hidden')
   document.getElementById('progress-section').classList.add('hidden')
+}
+
+async function submitUrls(e) {
+  e.preventDefault()
+  const raw = document.getElementById('url-input').value.trim()
+  if (!raw) { showToast('Введи хотя бы одну ссылку', true); return }
+  // Split by newlines and commas, filter empty
+  const urls = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+  if (!urls.length) { showToast('Не найдено ссылок', true); return }
+  showToast(`Загружаю метаданные ${urls.length} видео...`)
+  await fetchVideos('/api/videos', { urls })
 }
 
 // ─── Fetch videos ────────────────────────────────────────────────
@@ -200,6 +213,7 @@ async function startTranscription() {
     })
     if (!r.ok) { const err = await r.json(); showToast('Ошибка: ' + fmtErr(err, r.status), true); return }
     const data = await r.json()
+    requestNotifyPermission()
     startSSE(data.job_id, selectedVideos.length)
     document.getElementById('progress-section').classList.remove('hidden')
     showToast('Транскрибация запущена')
@@ -208,9 +222,11 @@ async function startTranscription() {
   }
 }
 
+const _processingStart = {}  // videoId -> startMs when status first became 'processing'
+
 function startSSE(jobId, total) {
   if (sseSource) sseSource.close()
-  document.getElementById('progress-count').textContent = `0/${total}`
+  if (total) document.getElementById('progress-count').textContent = `0/${total}`
   document.getElementById('progress-fill').style.width = '0%'
   sseSource = new EventSource('/api/progress/' + jobId)
   sseSource.onmessage = (e) => {
@@ -221,68 +237,296 @@ function startSSE(jobId, total) {
     document.getElementById('progress-fill').style.background = pct === 100 ? 'var(--done)' : 'var(--accent)'
     document.getElementById('progress-count').textContent = `${done}/${data.total || total}`
     if (data.videos) {
+      const jid = jobId
       document.getElementById('job-list').innerHTML = data.videos.map(v => {
         const cls = { completed: 'v-done', failed: 'v-failed', processing: 'v-processing' }[v.status] || 'v-pending'
         const icon = { completed: '✓', failed: '✕', processing: '⟳' }[v.status] || '·'
         const orig = currentVideos.find(x => x.video_id === v.video_id)
         const label = v.title || (orig ? orig.title : v.video_id)
         const errNote = v.error_msg ? `<div class="video-error">${escHtml(v.error_msg)}</div>` : ''
-        return `<div class="video-item">
+        const retryBtn = v.status === 'failed'
+          ? `<button class="btn-retry" onclick="retryVideo(${jid},'${v.video_id}')">↺ Повторить</button>`
+          : ''
+        const progressBar = buildVideoProgressBar(v)
+        return `<div class="video-item" id="job-item-${v.video_id}">
           <div class="video-meta">
             <div class="video-title">${escHtml(label)}</div>
             ${errNote}
           </div>
-          <span class="video-status ${cls}">${icon} ${v.status}</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            ${retryBtn}
+            <span class="video-status ${cls}">${icon}</span>
+          </div>
+          ${progressBar}
         </div>`
       }).join('')
     }
     if (data.status === 'completed') {
       sseSource.close()
       showToast(`✓ Готово! ${data.completed} транскрипций сохранено`)
+      notifyJobDone(data.completed, data.failed || 0)
     }
   }
   sseSource.onerror = () => sseSource.close()
 }
 
+function buildVideoProgressBar(v) {
+  const id = v.video_id
+  if (v.status === 'processing') {
+    if (!_processingStart[id]) _processingStart[id] = Date.now()
+    const elapsed = (Date.now() - _processingStart[id]) / 1000
+    // Estimate: Whisper ~0.5x realtime on CPU, ~6x on Apple GPU → use 0.4x as middle ground
+    const estimatedSec = Math.max(8, (v.duration_sec || 180) * 0.4)
+    return `<div class="vpbar">
+      <div class="vpbar-fill running" style="animation-duration:${estimatedSec.toFixed(1)}s;animation-delay:-${elapsed.toFixed(1)}s"></div>
+    </div>`
+  }
+  if (v.status === 'completed') {
+    delete _processingStart[id]
+    return `<div class="vpbar"><div class="vpbar-fill" style="width:100%;background:var(--done)"></div></div>`
+  }
+  if (v.status === 'failed') {
+    delete _processingStart[id]
+    return `<div class="vpbar"><div class="vpbar-fill" style="width:100%;background:var(--error);opacity:.5"></div></div>`
+  }
+  // pending
+  return `<div class="vpbar"><div class="vpbar-fill" style="width:0"></div></div>`
+}
+
+async function retryVideo(jobId, videoId) {
+  const btn = event.target
+  btn.disabled = true
+  btn.textContent = '⟳ ...'
+  try {
+    const r = await fetch(`/api/retry/${jobId}/${videoId}`, { method: 'POST' })
+    if (!r.ok) {
+      btn.disabled = false; btn.textContent = '↺ Повторить'
+      showToast('Ошибка повтора', true); return
+    }
+    showToast('Повторяю...')
+    if (!sseSource || sseSource.readyState === EventSource.CLOSED) {
+      document.getElementById('progress-section').classList.remove('hidden')
+      startSSE(jobId, 0)
+    }
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '↺ Повторить'
+    showToast('Ошибка: ' + e.message, true)
+  }
+}
+
+function requestNotifyPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission()
+  }
+}
+
+function notifyJobDone(completed, failed) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  const body = failed > 0
+    ? `✓ ${completed} транскрипций сохранено · ${failed} ошибок`
+    : `✓ ${completed} транскрипций сохранено`
+  new Notification('Транскрибация завершена', { body })
+}
+
 // ─── Library ─────────────────────────────────────────────────────
 
 let libSearchTimer = null
+const _transcriptCache = {}
+
 function searchLibrary() {
   clearTimeout(libSearchTimer)
   libSearchTimer = setTimeout(() => { libPage = 1; loadLibrary() }, 300)
 }
 
+async function loadChannelFilter() {
+  try {
+    const r = await fetch('/api/channels')
+    const data = await r.json()
+    const sel = document.getElementById('filter-channel')
+    if (!sel) return
+    const current = sel.value
+    sel.innerHTML = '<option value="">Все каналы</option>' +
+      data.channels.map(c => `<option value="${escHtml(c)}"${c === current ? ' selected' : ''}>${escHtml(c)}</option>`).join('')
+  } catch { /* non-critical */ }
+}
+
+function applyFilters() {
+  libPage = 1
+  loadLibrary()
+  const hasFilters = ['filter-channel', 'filter-method', 'filter-date-from', 'filter-date-to']
+    .some(id => document.getElementById(id)?.value)
+  const resetBtn = document.getElementById('filters-reset')
+  if (resetBtn) resetBtn.style.display = hasFilters ? '' : 'none'
+}
+
+function resetFilters() {
+  ['filter-channel', 'filter-method', 'filter-date-from', 'filter-date-to'].forEach(id => {
+    const el = document.getElementById(id)
+    if (el) el.value = ''
+  })
+  document.getElementById('filters-reset').style.display = 'none'
+  libPage = 1
+  loadLibrary()
+}
+
 async function loadLibrary(page = libPage) {
   libPage = page
   const q = document.getElementById('lib-search')?.value?.trim()
-  const url = `/api/results?page=${page}&per_page=20${q ? '&q=' + encodeURIComponent(q) : ''}`
+  const channel = document.getElementById('filter-channel')?.value || ''
+  const method = document.getElementById('filter-method')?.value || ''
+  const dateFrom = document.getElementById('filter-date-from')?.value || ''
+  const dateTo = document.getElementById('filter-date-to')?.value || ''
+  const params = new URLSearchParams({ page, per_page: 20 })
+  if (q) params.set('q', q)
+  if (channel) params.set('channel', channel)
+  if (method) params.set('method', method)
+  if (dateFrom) params.set('date_from', dateFrom)
+  if (dateTo) params.set('date_to', dateTo)
+  const url = `/api/results?${params}`
   const r = await fetch(url)
   const data = await r.json()
   document.getElementById('lib-total').textContent = `${data.total} транскрипций`
-  document.getElementById('lib-list').innerHTML = data.results.map(item => `
-    <div class="lib-item">
-      <div class="lib-meta">
-        <div class="lib-title">${escHtml(item.title || item.video_id)}</div>
-        <div class="lib-info">
-          <span>${escHtml(item.channel || '')}</span>
-          <span>${item.duration_sec ? formatDuration(item.duration_sec) : ''}</span>
-          <span>${item.upload_date ? formatDate(item.upload_date) : ''}</span>
-          <span class="badge-method">${item.method || ''}</span>
+  document.getElementById('lib-list').innerHTML = data.results.map(item => {
+    const id = item.video_id
+    const methodBadge = item.method ? `<span class="badge-method">${item.method}</span>` : ''
+    const snippet = item.snippet ? `<div class="lib-snippet">${item.snippet}</div>` : ''
+    return `<div class="lib-item" id="lib-${id}">
+      <div class="lib-item-row">
+        <div class="lib-meta">
+          <div class="lib-title">${escHtml(item.title || id)}</div>
+          <div class="lib-info">
+            <span>${escHtml(item.channel || '')}</span>
+            <span>${item.duration_sec ? formatDuration(item.duration_sec) : ''}</span>
+            <span>${item.upload_date ? formatDate(item.upload_date) : ''}</span>
+            ${methodBadge}
+          </div>
+          ${snippet}
+        </div>
+        <div class="lib-actions">
+          <button class="btn-link" onclick="copyTranscript('${id}')">📋</button>
+          <button class="btn-link viewer-toggle" onclick="toggleViewer('${id}')">Открыть</button>
+          <a href="https://youtube.com/watch?v=${id}" target="_blank" class="btn-link">YT ↗</a>
+          <button class="btn-link btn-delete" onclick="deleteTranscript('${id}', event)" title="Удалить">✕</button>
         </div>
       </div>
-      <div class="lib-actions">
-        <a href="https://youtube.com/watch?v=${item.video_id}" target="_blank" class="btn-link">YT ↗</a>
+      <div class="lib-viewer hidden" id="viewer-${id}">
+        <div class="viewer-toolbar">
+          <button class="btn-link" onclick="copyTranscript('${id}')">📋 Копировать</button>
+          <a href="/api/transcripts/${id}/srt" class="btn-link" download>⬇ SRT</a>
+        </div>
+        <div class="viewer-text" id="viewer-text-${id}"></div>
       </div>
-    </div>
-  `).join('') || '<div style="padding:20px;text-align:center;color:var(--muted)">Нет транскрипций</div>'
+    </div>`
+  }).join('') || '<div style="padding:20px;text-align:center;color:var(--muted)">Нет транскрипций</div>'
 
-  // pagination
   const totalPages = Math.ceil(data.total / 20)
   document.getElementById('lib-pagination').innerHTML = totalPages > 1
     ? Array.from({ length: totalPages }, (_, i) => i + 1)
         .map(p => `<button class="page-btn${p === page ? ' active' : ''}" onclick="loadLibrary(${p})">${p}</button>`)
         .join('')
     : ''
+}
+
+async function fetchTranscript(videoId) {
+  if (_transcriptCache[videoId]) return _transcriptCache[videoId]
+  const r = await fetch(`/api/transcripts/${videoId}`)
+  if (!r.ok) return null
+  const data = await r.json()
+  _transcriptCache[videoId] = data
+  return data
+}
+
+function renderTranscriptText(text) {
+  if (!text) return '<span style="color:var(--muted)">Текст недоступен</span>'
+  const tsRe = /^\[(\d{2}:\d{2}:\d{2})\] /
+  const lines = text.split('\n')
+  const hasTs = lines.some(l => tsRe.test(l))
+  if (hasTs) {
+    return lines.map(line => {
+      const m = line.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*(.*)$/)
+      if (m) return `<span class="viewer-ts">${escHtml(m[1])}</span> ${escHtml(m[2])}`
+      return escHtml(line)
+    }).join('\n')
+  }
+  return escHtml(text)
+}
+
+async function toggleViewer(videoId) {
+  const viewer = document.getElementById('viewer-' + videoId)
+  if (!viewer) return
+  if (!viewer.classList.contains('hidden')) {
+    viewer.classList.add('hidden')
+    const btn = viewer.closest('.lib-item')?.querySelector('.viewer-toggle')
+    if (btn) btn.textContent = 'Открыть'
+    return
+  }
+  const textEl = document.getElementById('viewer-text-' + videoId)
+  viewer.classList.remove('hidden')
+  const btn = viewer.closest('.lib-item')?.querySelector('.viewer-toggle')
+  if (btn) btn.textContent = 'Закрыть'
+  if (textEl.dataset.loaded) return
+  textEl.innerHTML = '<span style="color:var(--muted)">Загружаю...</span>'
+  const data = await fetchTranscript(videoId)
+  if (!data) { textEl.textContent = 'Ошибка загрузки'; return }
+  textEl.innerHTML = renderTranscriptText(data.text)
+  textEl.dataset.loaded = '1'
+}
+
+async function deleteTranscript(videoId, event) {
+  event.stopPropagation()
+  if (!confirm('Удалить эту транскрипцию? Файл .txt тоже будет удалён.')) return
+  try {
+    const r = await fetch(`/api/transcripts/${videoId}`, { method: 'DELETE' })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      showToast('Ошибка удаления: ' + (err.detail || r.status), true)
+      return
+    }
+    delete _transcriptCache[videoId]
+    document.getElementById('lib-' + videoId)?.remove()
+    // If item not found by lib- id, reload the whole list
+    if (!document.getElementById('lib-' + videoId)) loadLibrary()
+    showToast('Удалено')
+    loadChannelFilter()
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, true)
+  }
+}
+
+async function clearAllTranscripts() {
+  const totalEl = document.getElementById('lib-total')
+  const count = totalEl ? totalEl.textContent : ''
+  if (!confirm(`Удалить ВСЕ транскрипции (${count})?\nФайлы .txt тоже будут удалены.\nЭто действие нельзя отменить.`)) return
+  try {
+    const r = await fetch('/api/transcripts/delete-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_ids: [] }),
+    })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      showToast('Ошибка очистки: ' + (err.detail || r.status), true)
+      return
+    }
+    const data = await r.json()
+    Object.keys(_transcriptCache).forEach(k => delete _transcriptCache[k])
+    loadLibrary()
+    loadChannelFilter()
+    showToast(`✓ Удалено ${data.deleted} транскрипций`)
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, true)
+  }
+}
+
+async function copyTranscript(videoId) {
+  try {
+    const data = await fetchTranscript(videoId)
+    if (!data?.text) { showToast('Текст не найден', true); return }
+    await navigator.clipboard.writeText(data.text)
+    showToast('✓ Скопировано!')
+  } catch (e) {
+    showToast('Ошибка копирования: ' + e.message, true)
+  }
 }
 
 // ─── Export ──────────────────────────────────────────────────────
@@ -397,7 +641,19 @@ async function loadSettings() {
 
     renderModeCards(_currentMode)
     setModeStatus(_currentMode)
+
+    // Restore timestamps toggle
+    const tsToggle = document.getElementById('timestamps-toggle')
+    if (tsToggle) tsToggle.checked = data.timestamps !== false
   } catch { /* non-critical */ }
+}
+
+async function setTimestamps(enabled) {
+  await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ timestamps: enabled }),
+  }).catch(() => {})
+  showToast(enabled ? 'Временные метки включены' : 'Временные метки отключены')
 }
 
 function _applySaveModeUI(mode) {
@@ -673,8 +929,29 @@ async function saveApiKey() {
   }
 }
 
+// ─── Theme ───────────────────────────────────────────────────────
+
+function initTheme() {
+  const saved = localStorage.getItem('theme')
+  const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true
+  applyTheme(saved || (prefersDark ? 'dark' : 'light'))
+}
+
+function toggleTheme() {
+  const current = document.body.dataset.theme || 'dark'
+  applyTheme(current === 'dark' ? 'light' : 'dark')
+}
+
+function applyTheme(theme) {
+  document.body.dataset.theme = theme
+  localStorage.setItem('theme', theme)
+  const btn = document.getElementById('theme-btn')
+  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙'
+}
+
 // Init settings on page load
 window.addEventListener('load', () => {
+  initTheme()
   loadSettings()
   initApiKeyBanner()
 })
