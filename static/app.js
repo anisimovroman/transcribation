@@ -313,8 +313,14 @@ async function stopTranscription() {
       showToast('Ошибка остановки: ' + (err.detail || r.status), true)
       btn.disabled = false
       btn.textContent = '⏹ Стоп'
+      return
     }
-    // SSE will close itself when it receives 'cancelled' status
+    const data = await r.json()
+    // Close SSE immediately — don't wait for next SSE tick
+    sseSource?.close()
+    _setStopBtn(false)
+    _currentJobId = null
+    showToast(`Остановлено · ${data.completed ?? ''} сохранено`)
   } catch (e) {
     showToast('Ошибка: ' + e.message, true)
     btn.disabled = false
@@ -1006,4 +1012,5 @@ window.addEventListener('load', () => {
   initTheme()
   loadSettings()
   initApiKeyBanner()
+  refreshQuota()
 })

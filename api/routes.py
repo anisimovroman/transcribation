@@ -517,7 +517,8 @@ async def cancel_job(job_id: int):
             "UPDATE jobs SET failed=?, status='cancelled' WHERE id=?",
             (failed, job_id),
         )
-    return {"job_id": job_id, "status": "cancelled"}
+    completed = get_job_status(job_id)["completed"]
+    return {"job_id": job_id, "status": "cancelled", "completed": completed}
 
 
 # ─── Retry ──────────────────────────────────────────────────────
