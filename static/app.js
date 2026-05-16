@@ -78,9 +78,28 @@ async function fetchVideos(url, body) {
     renderVideoList()
     showToast(`Найдено ${currentVideos.length} видео`)
     fetchEstimateFromServer(currentVideos)  // background cache check
+    refreshQuota()
   } catch (err) {
     showToast('Сетевая ошибка: ' + err.message, true)
   }
+}
+
+async function refreshQuota() {
+  try {
+    const r = await fetch('/api/quota')
+    if (!r.ok) return
+    const d = await r.json()
+    const bar = document.getElementById('quota-bar')
+    if (!bar) return
+    if (d.used === 0) { bar.classList.add('hidden'); return }
+    bar.classList.remove('hidden')
+    const pct = Math.min(100, Math.round(d.used / d.total * 100))
+    document.getElementById('quota-fill').style.width = pct + '%'
+    document.getElementById('quota-fill').style.background =
+      pct >= 90 ? 'var(--error)' : pct >= 70 ? '#f59e0b' : 'var(--accent)'
+    document.getElementById('quota-text').textContent =
+      `${d.used.toLocaleString()} / ${d.total.toLocaleString()} (осталось ${d.remaining.toLocaleString()})`
+  } catch { /* non-critical */ }
 }
 
 function renderVideoList() {

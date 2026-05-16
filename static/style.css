@@ -163,6 +163,10 @@ input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--ac
 .api-key-save{padding:8px 16px;font-size:13px}
 .api-key-hint{font-size:11px;color:var(--muted);line-height:1.5}
 .api-key-hint a{color:var(--accent)}
+.quota-bar{padding:10px 0 2px;border-top:1px solid rgba(99,102,241,.15);margin-top:12px}
+.quota-label{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:5px}
+.quota-track{height:4px;background:var(--elevated);border-radius:2px;overflow:hidden}
+.quota-fill{height:100%;border-radius:2px;background:var(--accent);transition:width .4s,background .4s}
 
 /* INSTRUCTIONS */
 .instructions{margin-top:32px;border:1px solid var(--border);border-radius:12px;overflow:hidden}

@@ -129,6 +129,20 @@ class SettingsRequest(BaseModel):
     timestamps: Optional[bool] = None
 
 
+@router.get("/quota")
+async def get_quota():
+    import core.youtube as _yt
+    used = sum(_yt._quota_used.values())
+    total = 10_000
+    return {
+        "used": used,
+        "remaining": max(0, total - used),
+        "total": total,
+        "search_list": _yt._quota_used["search_list"],
+        "videos_list": _yt._quota_used["videos_list"],
+    }
+
+
 @router.get("/settings")
 async def get_settings():
     key = _cfg.YOUTUBE_API_KEY
