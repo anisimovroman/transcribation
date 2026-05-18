@@ -76,11 +76,29 @@
           <label>Мин. длина (мин)</label>
           <input type="number" id="channel-min-dur" value="5" min="0">
         </div>
+        <div class="field">
+          <label>Макс. длина (мин)</label>
+          <input type="number" id="channel-max-dur" placeholder="∞" min="1">
+        </div>
       </div>
-      <label class="checkbox-label">
-        <input type="checkbox" id="channel-exclude-shorts" checked>
-        Исключать Shorts (≤60 сек)
-      </label>
+      <div class="row">
+        <div class="field">
+          <label>Сортировка</label>
+          <select id="channel-sort">
+            <option value="newest">Сначала новые</option>
+            <option value="oldest">Сначала старые</option>
+            <option value="views">По просмотрам</option>
+            <option value="duration_desc">Длинные сначала</option>
+            <option value="duration_asc">Короткие сначала</option>
+          </select>
+        </div>
+        <div class="field" style="justify-content:flex-end;padding-top:18px">
+          <label class="checkbox-label">
+            <input type="checkbox" id="channel-exclude-shorts" checked>
+            Исключать Shorts (≤60 сек)
+          </label>
+        </div>
+      </div>
       <button type="submit" class="btn-primary">Получить список видео →</button>
     </form>
 
@@ -97,15 +115,27 @@
             <option value="viewCount">По просмотрам</option>
             <option value="date">По дате</option>
             <option value="rating">По рейтингу</option>
+            <option value="title">По названию</option>
           </select>
         </div>
         <div class="field">
-          <label>Период</label>
+          <label>Дата загрузки</label>
           <select id="search-date">
-            <option value="">Любой</option>
-            <option value="week">Последняя неделя</option>
-            <option value="month">Последний месяц</option>
-            <option value="year">Последний год</option>
+            <option value="">Любая</option>
+            <option value="hour">Последний час</option>
+            <option value="today">Сегодня</option>
+            <option value="week">Неделя</option>
+            <option value="month">Месяц</option>
+            <option value="year">Год</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Длительность</label>
+          <select id="search-duration">
+            <option value="any">Любая</option>
+            <option value="short">До 4 мин</option>
+            <option value="medium">4–20 мин</option>
+            <option value="long">Более 20 мин</option>
           </select>
         </div>
         <div class="field">
@@ -113,6 +143,85 @@
           <input type="number" id="search-limit" value="20" min="1" max="200">
         </div>
       </div>
+
+      <!-- Дополнительные фильтры -->
+      <details id="search-advanced">
+        <summary class="search-adv-toggle">⚙ Дополнительные фильтры</summary>
+        <div class="search-adv-body">
+          <div class="row">
+            <div class="field">
+              <label>Тип</label>
+              <select id="search-event-type">
+                <option value="any">Любой</option>
+                <option value="live">Прямой эфир</option>
+                <option value="upcoming">Запланированные</option>
+                <option value="completed">Завершённые стримы</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Качество</label>
+              <select id="search-definition">
+                <option value="any">Любое</option>
+                <option value="high">HD и выше</option>
+                <option value="standard">SD</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Субтитры</label>
+              <select id="search-caption">
+                <option value="any">Любые</option>
+                <option value="closedCaption">Только с субтитрами</option>
+                <option value="none">Без субтитров</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Лицензия</label>
+              <select id="search-license">
+                <option value="any">Любая</option>
+                <option value="creativeCommon">Creative Commons</option>
+                <option value="youtube">Стандартная YouTube</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Язык результатов</label>
+              <select id="search-lang">
+                <option value="">Любой</option>
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+                <option value="de">Deutsch</option>
+                <option value="fr">Français</option>
+                <option value="es">Español</option>
+                <option value="pt">Português</option>
+                <option value="it">Italiano</option>
+                <option value="ja">日本語</option>
+                <option value="zh">中文</option>
+                <option value="ko">한국어</option>
+                <option value="ar">العربية</option>
+                <option value="hi">हिन्दी</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Регион</label>
+              <select id="search-region">
+                <option value="">Глобально</option>
+                <option value="RU">Россия</option>
+                <option value="US">США</option>
+                <option value="GB">Великобритания</option>
+                <option value="DE">Германия</option>
+                <option value="FR">Франция</option>
+                <option value="JP">Япония</option>
+                <option value="KR">Корея</option>
+                <option value="IN">Индия</option>
+                <option value="BR">Бразилия</option>
+                <option value="AU">Австралия</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </details>
+
       <button type="submit" class="btn-primary">Найти видео →</button>
     </form>
 

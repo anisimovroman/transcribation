@@ -52,9 +52,15 @@ async function submitChannel(e) {
   const url = document.getElementById('channel-url').value.trim()
   const limit = +document.getElementById('channel-limit').value
   const minDur = +document.getElementById('channel-min-dur').value * 60
+  const maxDurRaw = document.getElementById('channel-max-dur').value
+  const maxDur = maxDurRaw ? +maxDurRaw * 60 : null
   const excludeShorts = document.getElementById('channel-exclude-shorts').checked
+  const sortBy = document.getElementById('channel-sort').value
   showToast('Загружаю список видео...')
-  await fetchVideos('/api/channel', { channel_url: url, limit, min_duration_sec: minDur, exclude_shorts: excludeShorts })
+  await fetchVideos('/api/channel', {
+    channel_url: url, limit, min_duration_sec: minDur,
+    max_duration_sec: maxDur, exclude_shorts: excludeShorts, sort_by: sortBy,
+  })
 }
 
 async function submitSearch(e) {
@@ -62,9 +68,20 @@ async function submitSearch(e) {
   const query = document.getElementById('search-query').value.trim()
   const order = document.getElementById('search-order').value
   const date_filter = document.getElementById('search-date').value || null
+  const duration_filter = document.getElementById('search-duration').value
   const limit = +document.getElementById('search-limit').value
+  const video_definition = document.getElementById('search-definition').value
+  const video_caption = document.getElementById('search-caption').value
+  const video_license = document.getElementById('search-license').value
+  const event_type = document.getElementById('search-event-type').value
+  const relevance_language = document.getElementById('search-lang').value
+  const region_code = document.getElementById('search-region').value
   showToast('Ищу видео...')
-  await fetchVideos('/api/search', { query, order, date_filter, limit })
+  await fetchVideos('/api/search', {
+    query, order, date_filter, duration_filter, limit,
+    video_definition, video_caption, video_license,
+    event_type, relevance_language, region_code,
+  })
 }
 
 async function fetchVideos(url, body) {

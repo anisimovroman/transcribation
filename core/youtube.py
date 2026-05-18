@@ -205,6 +205,7 @@ def get_channel_videos(
     exclude_shorts_flag: bool = True,
     min_duration_sec: int = 0,
     max_duration_sec: Optional[int] = None,
+    sort_by: str = "newest",  # newest | oldest | views | duration_asc | duration_desc
 ) -> list[VideoMeta]:
     url = _parse_channel_url(channel_url)
     cmd = [
@@ -249,6 +250,16 @@ def get_channel_videos(
 
     videos = filter_by_duration(videos, min_sec=min_duration_sec, max_sec=max_duration_sec)
 
+    if sort_by == "oldest":
+        videos = list(reversed(videos))
+    elif sort_by == "views":
+        videos = sort_by_views(videos)
+    elif sort_by == "duration_asc":
+        videos = sorted(videos, key=lambda v: v.duration)
+    elif sort_by == "duration_desc":
+        videos = sorted(videos, key=lambda v: v.duration, reverse=True)
+    # "newest" = default playlist order (already newest-first on YouTube)
+
     if limit is not None:
         videos = videos[:limit]
 
@@ -260,6 +271,12 @@ def search_videos(
     order: str = "relevance",
     duration_filter: str = "any",
     date_filter: Optional[str] = None,
+    video_definition: str = "any",
+    video_caption: str = "any",
+    video_license: str = "any",
+    event_type: str = "any",
+    relevance_language: str = "",
+    region_code: str = "",
     limit: int = 50,
 ) -> list[VideoMeta]:
     yt = get_youtube_client()
@@ -267,30 +284,42 @@ def search_videos(
     page_token = None
     remaining = min(limit, 200)
 
+    from datetime import datetime, timedelta
     published_after = None
-    if date_filter == "today":
-        from datetime import datetime, timedelta
-        published_after = (datetime.utcnow() - timedelta(days=1)).isoformat() + "Z"
+    if date_filter == "hour":
+        published_after = (datetime.utcnow() - timedelta(hours=1)).isoformat() + "Z"
+    elif date_filter == "today":
+        published_after = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + "Z"
     elif date_filter == "week":
-        from datetime import datetime, timedelta
         published_after = (datetime.utcnow() - timedelta(weeks=1)).isoformat() + "Z"
     elif date_filter == "month":
-        from datetime import datetime, timedelta
         published_after = (datetime.utcnow() - timedelta(days=30)).isoformat() + "Z"
     elif date_filter == "year":
-        from datetime import datetime, timedelta
         published_after = (datetime.utcnow() - timedelta(days=365)).isoformat() + "Z"
 
     while remaining > 0:
         page_limit = min(remaining, 50)
-        params = {
+        params: dict = {
             "q": query,
             "part": "id,snippet",
             "type": "video",
             "maxResults": page_limit,
             "order": order,
-            "videoDuration": duration_filter,
         }
+        if duration_filter and duration_filter != "any":
+            params["videoDuration"] = duration_filter
+        if video_definition and video_definition != "any":
+            params["videoDefinition"] = video_definition
+        if video_caption and video_caption != "any":
+            params["videoCaption"] = video_caption
+        if video_license and video_license != "any":
+            params["videoLicense"] = video_license
+        if event_type and event_type != "any":
+            params["eventType"] = event_type
+        if relevance_language:
+            params["relevanceLanguage"] = relevance_language
+        if region_code:
+            params["regionCode"] = region_code
         if page_token:
             params["pageToken"] = page_token
         if published_after:

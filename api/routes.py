@@ -54,6 +54,7 @@ class ChannelRequest(BaseModel):
     exclude_shorts: bool = True
     min_duration_sec: int = Field(default=0, ge=0)
     max_duration_sec: Optional[int] = None
+    sort_by: str = "newest"  # newest | oldest | views | duration_asc | duration_desc
 
 
 class SearchRequest(BaseModel):
@@ -61,6 +62,12 @@ class SearchRequest(BaseModel):
     order: str = "relevance"
     duration_filter: str = "any"
     date_filter: Optional[str] = None
+    video_definition: str = "any"
+    video_caption: str = "any"
+    video_license: str = "any"
+    event_type: str = "any"
+    relevance_language: str = ""
+    region_code: str = ""
     limit: int = Field(default=50, ge=1, le=200)
 
 
@@ -371,6 +378,7 @@ async def channel_videos(req: ChannelRequest):
             exclude_shorts_flag=req.exclude_shorts,
             min_duration_sec=req.min_duration_sec,
             max_duration_sec=req.max_duration_sec,
+            sort_by=req.sort_by,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -388,6 +396,12 @@ async def search(req: SearchRequest):
             order=req.order,
             duration_filter=req.duration_filter,
             date_filter=req.date_filter,
+            video_definition=req.video_definition,
+            video_caption=req.video_caption,
+            video_license=req.video_license,
+            event_type=req.event_type,
+            relevance_language=req.relevance_language,
+            region_code=req.region_code,
             limit=req.limit,
         )
     except QuotaExceededError as e:

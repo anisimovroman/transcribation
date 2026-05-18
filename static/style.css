@@ -85,6 +85,14 @@ input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--ac
 .vpbar-fill.running{animation:vpfill linear forwards}
 @keyframes vpfill{from{width:0}to{width:92%}}
 
+/* ADVANCED SEARCH FILTERS */
+#search-advanced{border:none;margin-top:2px}
+.search-adv-toggle{font-size:12px;color:var(--muted);cursor:pointer;list-style:none;user-select:none;padding:4px 0;width:fit-content;transition:color .15s}
+.search-adv-toggle::-webkit-details-marker{display:none}
+.search-adv-toggle:hover{color:var(--secondary)}
+#search-advanced[open] .search-adv-toggle{color:var(--secondary)}
+.search-adv-body{padding-top:10px;border-top:1px solid var(--border);margin-top:8px;display:flex;flex-direction:column;gap:12px}
+
 /* PROGRESS */
 .progress-section{margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
 .progress-header{display:flex;justify-content:space-between;font-size:13px;margin-bottom:10px}
